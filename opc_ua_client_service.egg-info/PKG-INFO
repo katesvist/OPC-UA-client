@@ -1,0 +1,227 @@
+Metadata-Version: 2.4
+Name: opc-ua-client-service
+Version: 0.1.0
+Summary: OPC UA Client microservice для промышленной платформы данных
+Requires-Python: <3.14,>=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: aio-pika<10.0.0,>=9.5.5
+Requires-Dist: asyncua<2.0.0,>=1.1.5
+Requires-Dist: fastapi<1.0.0,>=0.115.0
+Requires-Dist: prometheus-client<1.0.0,>=0.21.0
+Requires-Dist: pydantic<3.0.0,>=2.9.0
+Requires-Dist: pydantic-settings<3.0.0,>=2.5.0
+Requires-Dist: pyyaml<7.0.0,>=6.0.2
+Requires-Dist: redis<6.0.0,>=5.2.1
+Requires-Dist: structlog<25.0.0,>=24.4.0
+Requires-Dist: tenacity<10.0.0,>=9.0.0
+Requires-Dist: uvicorn[standard]<1.0.0,>=0.32.0
+
+# OPC UA Client Service
+
+Небольшой async-сервис на Python, который:
+- подключается к OPC UA серверу;
+- подписывается на нужные ноды;
+- получает live-значения и метаданные OPC UA;
+- упаковывает их в единое transport-событие;
+- отправляет событие в RabbitMQ;
+- если RabbitMQ недоступен, временно складывает события в Redis и потом доотправляет.
+
+Сервис не занимается бизнес-логикой, аналитикой и глобальным справочником параметров. Его зона ответственности: transport, reconnect, буферизация, публикация и диагностика.
+
+## Что реально умеет сейчас
+
+- OPC UA connect / reconnect / resubscribe
+- subscription mode
+- polling fallback
+- захват `value`, `source_timestamp`, `server_timestamp`, `status_code`, `browse_name`, `display_name`, `data_type`
+- публикация в RabbitMQ
+- временный буфер в Redis
+- retry worker для Redis -> RabbitMQ
+- технический API:
+  - `GET /health`
+  - `GET /ready`
+  - `GET /metrics`
+  - `GET /connections`
+  - `GET /subscriptions`
+  - `GET /buffer/stats`
+  - `GET /dead-letter`
+  - `POST /connections/{endpoint_id}/reconnect`
+  - `POST /browse`
+  - `POST /read`
+  - `POST /write`
+
+## Что сервис пока не делает
+
+- не имеет frontend для настройки;
+- не хранит конфигурацию подключений и привязок в собственной БД;
+- не интегрирован со внешним справочником параметров;
+
+## Как устроен поток данных
+
+1. OPC UA клиент получает обновление по подписке.
+2. Обновление превращается в `Observation`.
+3. Pipeline приводит значение к ожидаемому типу и собирает `ParameterEvent`.
+4. Событие отправляется в RabbitMQ.
+5. Если RabbitMQ недоступен, событие попадает в Redis.
+6. Фоновый worker позже повторяет отправку из Redis.
+
+
+## Что такое технические входные ограничения
+
+В конфиге ноды есть блок `input_control`. Это не бизнес-валидация, а только технические правила ingestion:
+- нужно ли подавлять точные дубликаты (`suppress_duplicates`);
+- применять ли deadband;
+
+По умолчанию сервис ничего не режет:
+- duplicate suppression выключен;
+- deadband не применяется, пока не задан явно.
+
+
+## Что такое value_transform
+
+Блок `value_transform` нужен для технической адаптации значения:
+- `scale_factor`
+- `offset`
+- `target_unit`
+
+полезно, если OPC UA источник отдаёт, например, "сырые" числа, которые нужно масштабировать
+
+## Конфиг нод
+
+Список нод и их operational-настройки живут внутри клиента (пока что).
+
+Главная сущность: `NodeRegistryEntry`
+
+Она описывает:
+- `node_id`
+- `endpoint_id`
+- `acquisition_mode`
+- `expected_type`
+- `read_enabled`
+- `write_enabled`
+- `input_control`
+- `value_transform`
+- локальные metadata и tags
+
+Это временный registry клиента, а не глобальный бизнес-справочник платформы.
+
+## Как поднять локально
+
+Через `make`:
+
+```bash
+make install
+make test
+make mock
+make run
+```
+
+Полезные команды:
+
+```bash
+make up
+make up-server
+make down
+make logs
+make health
+```
+
+`make up` поднимает полностью контейнерный стенд:
+- `opcua-client`
+- `mock-opcua-server`
+- `redis`
+- `rabbitmq`
+
+`make up-server` поднимает клиент, Redis и RabbitMQ в Docker, а OPC UA сервер ожидает на хосте по адресу `host.docker.internal:15353` по конфигу `examples/config.prosys.server.yaml`.
+
+Если нужен именно локальный docker-стенд целиком в контейнерах, можно запустить и напрямую:
+
+```bash
+docker compose up --build -d
+docker compose ps
+docker compose logs -f opcua-client
+```
+
+Доступные адреса:
+- `http://127.0.0.1:8080` для API клиента
+- `opc.tcp://127.0.0.1:4840/freeopcua/server/` для mock OPC UA сервера
+- `http://127.0.0.1:15672` для UI RabbitMQ
+
+Проверка готовности:
+
+```bash
+curl -s \
+  -H 'Authorization: Bearer example-management-token' \
+  http://127.0.0.1:8080/ready
+```
+
+Для контейнерного стенда используется отдельный файл `examples/config.docker.yaml`, потому что внутри Docker клиент должен обращаться к mock OPC UA серверу по имени сервиса `mock-opcua-server`, а не по `127.0.0.1`.
+
+Без `make`:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -U pip
+pip install -e '.[dev]'
+export OPC_CONFIG_FILE=examples/config.edge.yaml
+uvicorn src.main:app --host 0.0.0.0 --port 8080
+```
+
+## Переменные окружения
+
+Примеры:
+
+```bash
+export OPC_CONFIG_FILE=examples/config.edge.yaml
+export OPC_API__MANAGEMENT_TOKEN=secret-token
+export OPC_PUBLISHER__URL=amqp://guest:guest@localhost:5672/
+export OPC_BUFFER__REDIS_URL=redis://localhost:6379/0
+```
+
+## Тесты
+
+Что лежит в `tests/`:
+
+- `tests/unit`
+  - проверка pipeline
+  - проверка quality/status classification
+  - проверка Redis buffer
+  - проверка технических входных ограничений
+- `tests/integration`
+  - mock OPC UA server
+  - подписка на ноду
+  - retry буфера после отказа publisher
+
+Запуск:
+
+```bash
+make test
+```
+
+или
+
+```bash
+. .venv313/bin/activate
+pytest
+```
+
+## Зависимости
+
+Основные runtime-зависимости:
+- `aio-pika`
+- `asyncua`
+- `fastapi`
+- `prometheus-client`
+- `pydantic`
+- `pydantic-settings`
+- `pyyaml`
+- `redis`
+- `structlog`
+- `tenacity`
+- `uvicorn[standard]`
+
+Dev-зависимости:
+- `fakeredis`
+- `pytest`
+- `pytest-asyncio`

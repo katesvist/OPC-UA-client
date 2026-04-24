@@ -1,0 +1,113 @@
+service:
+  name: opc-ua-client-service
+  environment: local
+  mode: edge
+
+api:
+  host: 0.0.0.0
+  port: 8080
+  management_token: example-management-token
+
+logging:
+  level: INFO
+  json_logs: true
+
+buffer:
+  redis_url: redis://redis:6379/0
+  key_prefix: opcua-client
+  max_attempts: 10
+  flush_batch_size: 100
+  flush_interval_seconds: 5
+  retry_base_delay_seconds: 5
+  retry_max_delay_seconds: 300
+  retention_hours: 72
+
+publisher:
+  mode: rabbitmq
+  url: amqp://guest:guest@rabbitmq:5672/
+  exchange: opcua.events
+  exchange_type: direct
+  routing_key: opcua.parameter.events
+  queue_name: opcua.parameter.events
+  declare_exchange: true
+  declare_queue: true
+  durable: true
+  timeout_seconds: 5
+
+endpoints:
+  - id: rig-opc-primary
+    enabled: true
+    url: opc.tcp://127.0.0.1:4840/freeopcua/server/
+    security_policy: None
+    security_mode: None
+    auth:
+      mode: anonymous
+    session_timeout_ms: 60000
+    request_timeout_seconds: 5
+    reconnect_policy:
+      initial_delay_seconds: 2
+      max_delay_seconds: 30
+      backoff_multiplier: 2
+      failure_threshold: 5
+    subscription_defaults:
+      publish_interval_ms: 1000
+      keepalive_count: 10
+      lifetime_count: 30
+      queue_size: 100
+    metadata:
+      source_id: rig-site-01
+      source_system_id: scada-main
+      owner_type: rig
+      owner_id: rig-01
+      site_id: pad-a
+      asset_id: pump-01
+      tags:
+        - edge
+        - opcua
+
+nodes:
+  - id: pump01-pressure
+    endpoint_id: rig-opc-primary
+    node_id: ns=2;s=Pump01.Pressure
+    namespace_uri: urn:opcua:mvp
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: PUMP_PRESSURE
+    parameter_name: Давление насоса
+    expected_type: float
+    unit: bar
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+    value_transform:
+      scale_factor: 1.0
+      offset: 0.0
+      target_unit: bar
+    metadata:
+      subsystem: pumping
+      criticality: high
+    tags:
+      - pressure
+      - pump
+  - id: pump01-temperature
+    endpoint_id: rig-opc-primary
+    node_id: ns=2;s=Pump01.Temperature
+    namespace_uri: urn:opcua:mvp
+    acquisition_mode: polling
+    polling_interval_seconds: 2
+    parameter_code: PUMP_TEMPERATURE
+    parameter_name: Температура насоса
+    expected_type: float
+    unit: celsius
+    input_control:
+      stale_after_seconds: 60
+      suppress_duplicates: false
+    value_transform:
+      scale_factor: 1.0
+      offset: 0.0
+      target_unit: celsius
+    metadata:
+      subsystem: pumping
+    tags:
+      - temperature
+      - pump

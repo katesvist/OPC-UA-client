@@ -1,0 +1,128 @@
+service:
+  name: opc-ua-client-service
+  environment: server
+  mode: edge
+
+api:
+  host: 0.0.0.0
+  port: 8080
+  management_token: example-management-token
+
+logging:
+  level: INFO
+  json_logs: true
+
+buffer:
+  redis_url: redis://redis:6379/0
+  key_prefix: opcua-client
+  max_attempts: 10
+  flush_batch_size: 100
+  flush_interval_seconds: 5
+  retry_base_delay_seconds: 5
+  retry_max_delay_seconds: 300
+  retention_hours: 72
+
+publisher:
+  mode: rabbitmq
+  url: amqp://guest:guest@rabbitmq:5672/
+  exchange: opcua.events
+  exchange_type: direct
+  routing_key: opcua.parameter.events
+  queue_name: opcua.parameter.events
+  declare_exchange: true
+  declare_queue: true
+  durable: true
+  timeout_seconds: 5
+
+endpoints:
+  - id: prosys-local-tunnel
+    enabled: true
+    url: opc.tcp://host.docker.internal:15353/OPCUA/SimulationServer
+    security_policy: None
+    security_mode: None
+    auth:
+      mode: anonymous
+    session_timeout_ms: 60000
+    request_timeout_seconds: 5
+    reconnect_policy:
+      initial_delay_seconds: 2
+      max_delay_seconds: 30
+      backoff_multiplier: 2
+      failure_threshold: 5
+    subscription_defaults:
+      publish_interval_ms: 1000
+      keepalive_count: 10
+      lifetime_count: 30
+      queue_size: 100
+    metadata:
+      source_id: prosys-lab
+      source_system_id: prosys-simulation-server
+      owner_type: rig
+      owner_id: rig-01
+      site_id: remote-lab
+      asset_id: prosys
+      tags:
+        - edge
+        - opcua
+        - prosys
+
+nodes:
+  - id: standpipe-pressure
+    endpoint_id: prosys-local-tunnel
+    node_id: ns=3;i=2001
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: STANDPIPE_PRESSURE
+    parameter_name: Давление в манифольде
+    expected_type: float
+    unit: bar
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+  - id: hook-load
+    endpoint_id: prosys-local-tunnel
+    node_id: ns=3;i=2002
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: HOOK_LOAD
+    parameter_name: Нагрузка на крюке
+    expected_type: float
+    unit: t
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+  - id: flow-in
+    endpoint_id: prosys-local-tunnel
+    node_id: ns=3;i=2010
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: FLOW_IN
+    parameter_name: Входящий расход
+    expected_type: float
+    unit: l_min
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+  - id: rop
+    endpoint_id: prosys-local-tunnel
+    node_id: ns=3;i=2013
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: ROP
+    parameter_name: Механическая скорость проходки
+    expected_type: float
+    unit: m_h
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+  - id: sequence
+    endpoint_id: prosys-local-tunnel
+    node_id: ns=3;i=2032
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: SEQUENCE
+    parameter_name: Последовательность событий
+    expected_type: int
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
