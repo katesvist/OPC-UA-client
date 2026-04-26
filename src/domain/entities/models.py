@@ -20,6 +20,8 @@ class Observation(BaseModel):
     browse_name: str | None = None
     display_name: str | None = None
     data_type: str | None = None
+    value_rank: int | None = None
+    array_dimensions: list[int] = Field(default_factory=list)
     raw_value: Any = None
     source_timestamp: datetime | None = None
     server_timestamp: datetime | None = None
@@ -126,6 +128,8 @@ class BrowseNodeResult(BaseModel):
     display_name: str | None = None
     node_class: str
     data_type: str | None = None
+    value_rank: int | None = None
+    array_dimensions: list[int] = Field(default_factory=list)
     access_level: list[str] = Field(default_factory=list)
     has_children: bool = False
     depth: int = 0
@@ -143,6 +147,8 @@ class ReadResult(BaseModel):
     browse_name: str | None = None
     display_name: str | None = None
     data_type: str | None = None
+    value_rank: int | None = None
+    array_dimensions: list[int] = Field(default_factory=list)
     value: Any = None
     source_timestamp: datetime | None = None
     server_timestamp: datetime | None = None

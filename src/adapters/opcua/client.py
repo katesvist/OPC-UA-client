@@ -126,6 +126,8 @@ class OpcUaConnectionManager:
             browse_name = await node.read_browse_name()
             display_name = await node.read_display_name()
             data_type = await self._read_data_type_name(node)
+            value_rank = await self._read_value_rank(node)
+            array_dimensions = await self._read_array_dimensions(node)
             return ReadResult(
                 endpoint_id=self.endpoint.id,
                 node_id=node_id,
@@ -133,6 +135,8 @@ class OpcUaConnectionManager:
                 browse_name=getattr(browse_name, "to_string", lambda: str(browse_name))(),
                 display_name=getattr(display_name, "Text", str(display_name)),
                 data_type=data_type,
+                value_rank=value_rank,
+                array_dimensions=array_dimensions,
                 value=self._extract_variant_value(data_value),
                 source_timestamp=self._extract_timestamp(data_value, "SourceTimestamp"),
                 server_timestamp=self._extract_timestamp(data_value, "ServerTimestamp"),
@@ -143,6 +147,8 @@ class OpcUaConnectionManager:
                         "status_code_raw": self._extract_status_raw(data_value),
                         "source_picoseconds": getattr(data_value, "SourcePicoseconds", None),
                         "server_picoseconds": getattr(data_value, "ServerPicoseconds", None),
+                        "value_rank": value_rank,
+                        "array_dimensions": array_dimensions,
                     }
                 },
             )
@@ -194,6 +200,8 @@ class OpcUaConnectionManager:
                 browse_name=metadata.get("browse_name", node_config.browse_name),
                 display_name=metadata.get("display_name", node_config.display_name),
                 data_type=metadata.get("data_type"),
+                value_rank=metadata.get("value_rank"),
+                array_dimensions=list(metadata.get("array_dimensions", [])),
                 raw_value=value,
                 source_timestamp=self._extract_timestamp(data_value, "SourceTimestamp"),
                 server_timestamp=self._extract_timestamp(data_value, "ServerTimestamp"),
@@ -210,6 +218,8 @@ class OpcUaConnectionManager:
                         "browse_name": metadata.get("browse_name", node_config.browse_name),
                         "display_name": metadata.get("display_name", node_config.display_name),
                         "data_type": metadata.get("data_type"),
+                        "value_rank": metadata.get("value_rank"),
+                        "array_dimensions": list(metadata.get("array_dimensions", [])),
                     },
                     **node_config.metadata,
                 },
@@ -329,6 +339,8 @@ class OpcUaConnectionManager:
                     browse_name=self._metadata_value(node_cfg.node_id, "browse_name", node_cfg.browse_name),
                     display_name=self._metadata_value(node_cfg.node_id, "display_name", node_cfg.display_name),
                     data_type=self._node_metadata.get(node_cfg.node_id, {}).get("data_type"),
+                    value_rank=self._node_metadata.get(node_cfg.node_id, {}).get("value_rank"),
+                    array_dimensions=list(self._node_metadata.get(node_cfg.node_id, {}).get("array_dimensions", [])),
                     raw_value=self._extract_variant_value(data_value),
                     source_timestamp=self._extract_timestamp(data_value, "SourceTimestamp"),
                     server_timestamp=self._extract_timestamp(data_value, "ServerTimestamp"),
@@ -345,6 +357,8 @@ class OpcUaConnectionManager:
                             "browse_name": self._metadata_value(node_cfg.node_id, "browse_name", node_cfg.browse_name),
                             "display_name": self._metadata_value(node_cfg.node_id, "display_name", node_cfg.display_name),
                             "data_type": self._node_metadata.get(node_cfg.node_id, {}).get("data_type"),
+                            "value_rank": self._node_metadata.get(node_cfg.node_id, {}).get("value_rank"),
+                            "array_dimensions": list(self._node_metadata.get(node_cfg.node_id, {}).get("array_dimensions", [])),
                         },
                         **node_cfg.metadata,
                     },
@@ -375,6 +389,8 @@ class OpcUaConnectionManager:
                 "browse_name": getattr(browse_name, "to_string", lambda: str(browse_name))(),
                 "display_name": getattr(display_name, "Text", str(display_name)),
                 "data_type": getattr(variant_type, "name", str(variant_type)),
+                "value_rank": await self._read_value_rank(node),
+                "array_dimensions": await self._read_array_dimensions(node),
             }
         except Exception as exc:
             if self._is_missing_node_error(exc):
@@ -508,6 +524,8 @@ class OpcUaConnectionManager:
                         display_name=getattr(display_name, "Text", str(display_name)),
                         node_class=node_class_name,
                         data_type=await self._read_data_type_name(node),
+                        value_rank=await self._read_value_rank(node),
+                        array_dimensions=await self._read_array_dimensions(node),
                         access_level=access_level,
                         has_children=bool(children),
                         depth=depth,
@@ -580,6 +598,28 @@ class OpcUaConnectionManager:
         except Exception:
             return []
 
+    async def _read_value_rank(self, node: Any) -> int | None:
+        try:
+            data_value = await node.read_attribute(ua.AttributeIds.ValueRank)
+            raw_value = self._extract_variant_value(data_value)
+            if raw_value is None:
+                return None
+            return int(raw_value)
+        except Exception:
+            return None
+
+    async def _read_array_dimensions(self, node: Any) -> list[int]:
+        try:
+            data_value = await node.read_attribute(ua.AttributeIds.ArrayDimensions)
+            raw_value = self._extract_variant_value(data_value)
+            if raw_value is None:
+                return []
+            if isinstance(raw_value, (list, tuple)):
+                return [int(item) for item in raw_value]
+            return [int(raw_value)]
+        except Exception:
+            return []
+
     async def _build_write_data_value(self, node: Any, value: Any, node_cfg: NodeRegistryEntry | None) -> ua.DataValue:
         coerced_value = self._coerce_write_value(value, node_cfg)
         variant_type = await self._resolve_write_variant_type(node, node_cfg)
@@ -606,7 +646,16 @@ class OpcUaConnectionManager:
         return mapping.get(expected_type) if expected_type is not None else None
 
     def _coerce_write_value(self, value: Any, node_cfg: NodeRegistryEntry | None) -> Any:
+        if node_cfg is not None and node_cfg.value_shape == "array":
+            if not isinstance(value, (list, tuple)):
+                raise NodeWriteError(f"Не удалось привести значение {value!r} к массиву {node_cfg.expected_type}.")
+            return [self._coerce_write_scalar(item, node_cfg.expected_type) for item in value]
+        if node_cfg is not None and node_cfg.value_shape == "object":
+            return value
         expected_type = node_cfg.expected_type if node_cfg is not None else None
+        return self._coerce_write_scalar(value, expected_type)
+
+    def _coerce_write_scalar(self, value: Any, expected_type: str | None) -> Any:
         if expected_type == "bool":
             if isinstance(value, bool):
                 return value

@@ -93,6 +93,7 @@ class NodeRegistryEntry(BaseModel):
     parameter_code: str
     parameter_name: str
     expected_type: Literal["bool", "int", "float", "str", "char", "datetime"] = "float"
+    value_shape: Literal["scalar", "array", "object"] = "scalar"
     unit: str | None = None
     input_control: InputControlConfig = Field(
         default_factory=InputControlConfig,

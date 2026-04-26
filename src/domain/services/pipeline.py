@@ -105,6 +105,7 @@ class EventPipeline:
                     "read_enabled": node.read_enabled,
                     "write_enabled": node.write_enabled,
                     "expected_type": node.expected_type,
+                    "value_shape": node.value_shape,
                     "unit": node.unit,
                 },
                 "namespace_index": observation.namespace_index,
@@ -112,6 +113,8 @@ class EventPipeline:
                 "browse_name": observation.browse_name,
                 "display_name": observation.display_name,
                 "data_type": observation.data_type,
+                "value_rank": observation.value_rank,
+                "array_dimensions": observation.array_dimensions,
                 "endpoint_tags": endpoint.metadata.tags,
                 **node.metadata,
                 **observation.metadata,
@@ -155,7 +158,7 @@ class EventPipeline:
             node_id=observation.node_id,
             value_raw=observation.raw_value,
             value_normalized=None,
-            value_type=node.expected_type,
+            value_type=self._event_value_type(node),
             unit=node.unit,
             quality=quality,
             quality_code=quality_code,
@@ -176,6 +179,7 @@ class EventPipeline:
                     "read_enabled": node.read_enabled,
                     "write_enabled": node.write_enabled,
                     "expected_type": node.expected_type,
+                    "value_shape": node.value_shape,
                     "unit": node.unit,
                 },
                 "namespace_index": observation.namespace_index,
@@ -183,6 +187,8 @@ class EventPipeline:
                 "browse_name": observation.browse_name,
                 "display_name": observation.display_name,
                 "data_type": observation.data_type,
+                "value_rank": observation.value_rank,
+                "array_dimensions": observation.array_dimensions,
                 "endpoint_tags": endpoint.metadata.tags,
                 **node.metadata,
                 **observation.metadata,
@@ -208,3 +214,10 @@ class EventPipeline:
 
     def _key(self, observation: Observation) -> str:
         return f"{observation.endpoint_id}:{observation.node_id}"
+
+    def _event_value_type(self, node: NodeRegistryEntry) -> str:
+        if node.value_shape == "array":
+            return f"{node.expected_type}[]"
+        if node.value_shape == "object":
+            return "object"
+        return node.expected_type

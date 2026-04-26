@@ -104,3 +104,23 @@ async def test_write_node_converts_char_to_byte(endpoint_config, node_config, me
     assert data_value.Value is not None
     assert data_value.Value.VariantType == ua.VariantType.Byte
     assert data_value.Value.Value == ord("Z")
+
+
+@pytest.mark.asyncio
+async def test_write_node_serializes_integer_array(endpoint_config, node_config, metrics) -> None:
+    writeable_node = node_config.model_copy(
+        update={"write_enabled": True, "expected_type": "int", "value_shape": "array"}
+    )
+    manager = _build_manager(endpoint_config, writeable_node, metrics)
+
+    fake_node = MagicMock()
+    fake_node.read_data_type_as_variant_type = AsyncMock(return_value=ua.VariantType.Int16)
+    fake_node.write_attribute = AsyncMock()
+    manager._client.get_node.return_value = fake_node
+
+    await manager.write_node(writeable_node.node_id, ["1", 2, 3])
+
+    _, data_value = fake_node.write_attribute.await_args.args
+    assert data_value.Value is not None
+    assert data_value.Value.VariantType == ua.VariantType.Int16
+    assert data_value.Value.Value == [1, 2, 3]

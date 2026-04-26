@@ -148,3 +148,45 @@ async def test_pipeline_normalizes_char_value_to_symbol(endpoint_config, node_co
     assert event.value_raw == 90
     assert event.value_normalized == "Z"
     assert event.value_type == "char"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_normalizes_integer_array(endpoint_config, node_config) -> None:
+    publisher = PublisherOk()
+    buffer = InMemoryBuffer()
+    pipeline = EventPipeline(publisher=publisher, buffer=buffer, metrics=MetricsRegistry())
+    array_node = node_config.model_copy(
+        update={
+            "id": "node-array",
+            "node_id": 'ns=3;s="DB_For_Test"."testLoad"',
+            "parameter_code": "ARRAY_TEST",
+            "parameter_name": "ARRAY test",
+            "expected_type": "int",
+            "value_shape": "array",
+            "unit": "unit",
+        }
+    )
+    observation = Observation(
+        endpoint_id=endpoint_config.id,
+        source_id=endpoint_config.metadata.source_id,
+        owner_type=endpoint_config.metadata.owner_type,
+        owner_id=endpoint_config.metadata.owner_id,
+        node_id=array_node.node_id,
+        raw_value=[1, 2, 3],
+        data_type="Int16",
+        value_rank=1,
+        array_dimensions=[3],
+        status_code="Good",
+        acquisition_mode=AcquisitionMode.SUBSCRIPTION,
+        source_timestamp=datetime.now(UTC),
+    )
+
+    event = await pipeline.process(observation, endpoint_config, array_node)
+
+    assert event is not None
+    assert event.value_raw == [1, 2, 3]
+    assert event.value_normalized == [1, 2, 3]
+    assert event.value_type == "int[]"
+    assert event.metadata["node_registry"]["value_shape"] == "array"
+    assert event.metadata["value_rank"] == 1
+    assert event.metadata["array_dimensions"] == [3]
