@@ -16,7 +16,7 @@
 - subscription mode
 - polling fallback
 - захват `value`, `source_timestamp`, `server_timestamp`, `status_code`, `browse_name`, `display_name`, `data_type`
-- публикация в RabbitMQ
+- публикация в RabbitMQ в нативном формате клиента или в envelope для `params-validator`
 - временный буфер в Redis
 - retry worker для Redis -> RabbitMQ
 - технический API:
@@ -45,7 +45,7 @@
 1. OPC UA клиент получает обновление по подписке.
 2. Обновление превращается в `Observation`.
 3. Pipeline приводит значение к ожидаемому типу и собирает `ParameterEvent`.
-4. Событие отправляется в RabbitMQ.
+4. Событие отправляется в RabbitMQ. Для интеграции с сервисом параметров publisher может преобразовать `ParameterEvent` в envelope валидатора (`payload.name`, `payload.value`, `payload.type`, `payload.id_by_dict`, `payload.uom_by_dict` и т.д.).
 5. Если RabbitMQ недоступен, событие попадает в Redis.
 6. Фоновый worker позже повторяет отправку из Redis.
 
@@ -118,7 +118,32 @@ make health
 - `redis`
 - `rabbitmq`
 
-`make up-server` поднимает клиент, Redis и RabbitMQ в Docker, а OPC UA сервер ожидает на хосте по адресу `host.docker.internal:15353` по конфигу `examples/config.prosys.server.yaml`.
+`make up-server` поднимает клиент, Redis и RabbitMQ в Docker, а OPC UA сервер берется из full-конфига `runtime-config/config.full.docker.yaml`. Этот конфиг содержит и подключение, и текущий список нод. Дашборд меняет только секцию `nodes`, поэтому файл монтируется writable-директорией:
+
+```yaml
+OPC_CONFIG_FILE: /service/runtime-config/config.full.docker.yaml
+volumes:
+  - ./runtime-config:/service/runtime-config
+```
+
+В server-compose host-порты Redis/RabbitMQ сдвинуты, чтобы не конфликтовать с контейнерами сервиса параметров:
+- Redis: `127.0.0.1:6380 -> 6379`
+- RabbitMQ AMQP: `127.0.0.1:5673 -> 5672`
+- RabbitMQ UI: `127.0.0.1:15673 -> 15672`
+
+Внутри docker-сети клиент всё равно публикует на `rabbitmq:5672`. Если нужно вернуть старые host-порты, можно переопределить `OPC_REDIS_PORT`, `OPC_RABBITMQ_PORT` и `OPC_RABBITMQ_MANAGEMENT_PORT`.
+
+Для интеграции с params-validator в `runtime-config/config.full.docker.yaml` publisher настроен на:
+
+```yaml
+publisher:
+  exchange: validator.in.q
+  routing_key: validator.in.q
+  queue_name: validator.in.q
+  message_format: params_validator_envelope
+```
+
+Очередь объявляется клиентом с DLX-аргументами, совместимыми с валидатором, чтобы не было конфликта деклараций RabbitMQ.
 
 Если нужен именно локальный docker-стенд целиком в контейнерах, можно запустить и напрямую:
 
@@ -132,6 +157,7 @@ docker compose logs -f opcua-client
 - `http://127.0.0.1:8080` для API клиента
 - `opc.tcp://127.0.0.1:4840/freeopcua/server/` для mock OPC UA сервера
 - `http://127.0.0.1:15672` для UI RabbitMQ
+- `http://127.0.0.1:15673` для UI RabbitMQ server-compose
 
 Проверка готовности:
 

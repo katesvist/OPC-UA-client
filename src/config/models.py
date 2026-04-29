@@ -131,6 +131,8 @@ class PublisherSettings(BaseModel):
     exchange_type: Literal["direct", "topic", "fanout"] = "direct"
     routing_key: str = "opcua.parameter.events"
     queue_name: str | None = "opcua.parameter.events"
+    message_format: Literal["parameter_event", "params_validator_envelope"] = "parameter_event"
+    schema_version: str = "1.0"
     declare_exchange: bool = True
     declare_queue: bool = True
     durable: bool = True

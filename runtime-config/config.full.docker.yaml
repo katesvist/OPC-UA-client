@@ -1,0 +1,161 @@
+service:
+  name: opc-ua-client-service
+  environment: windows-real-test
+  mode: edge
+
+api:
+  host: 0.0.0.0
+  port: 8080
+  management_token: secret-token
+
+logging:
+  level: INFO
+  json_logs: true
+
+buffer:
+  redis_url: redis://redis:6379/0
+  key_prefix: opcua-client
+  max_attempts: 10
+  flush_batch_size: 100
+  flush_interval_seconds: 5
+  retry_base_delay_seconds: 5
+  retry_max_delay_seconds: 300
+  retention_hours: 72
+
+publisher:
+  mode: rabbitmq
+  url: amqp://guest:guest@rabbitmq:5672/
+  exchange: validator.in.q
+  exchange_type: direct
+  routing_key: validator.in.q
+  queue_name: validator.in.q
+  message_format: params_validator_envelope
+  schema_version: "1.0"
+  declare_exchange: true
+  declare_queue: true
+  durable: true
+  timeout_seconds: 5
+
+endpoints:
+  - id: remote-opc-server
+    enabled: true
+    url: opc.tcp://192.168.0.120:4840
+    security_policy: None
+    security_mode: None
+    auth:
+      mode: username_password
+      username: user3
+      password: "12345678"
+    session_timeout_ms: 60000
+    request_timeout_seconds: 5
+    reconnect_policy:
+      initial_delay_seconds: 2
+      max_delay_seconds: 30
+      backoff_multiplier: 2
+      failure_threshold: 5
+    subscription_defaults:
+      publish_interval_ms: 1000
+      keepalive_count: 10
+      lifetime_count: 30
+      queue_size: 100
+    metadata:
+      source_id: remote-opc-lab
+      source_system_id: opc-server-192-168-0-120
+      owner_type: rig
+      owner_id: rig-01
+      site_id: remote-lab
+      asset_id: opc-sim
+      tags:
+        - edge
+        - opcua
+        - windows
+
+nodes:
+  - id: rw-float
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="OPC_Data_exchange"."OPC_Dif_Pressure_Reg_Limit"
+    acquisition_mode: polling
+    polling_interval_seconds: 2
+    parameter_code: TEST_RW_FLOAT
+    parameter_name: Test RW Float
+    expected_type: float
+    unit: unit
+    write_enabled: true
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+  - id: rw-bool
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="OPC_Data_exchange"."OPC_Load_Reg_Setpoint_Visible"
+    acquisition_mode: polling
+    polling_interval_seconds: 2
+    parameter_code: TEST_RW_BOOL
+    parameter_name: Test RW Bool
+    expected_type: bool
+    unit: state
+    write_enabled: true
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+  - id: rw-ctest
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="DB_For_Test"."cTest"
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: TEST_RW_CTEST
+    parameter_name: Test RW cTest
+    expected_type: char
+    unit: char
+    write_enabled: true
+    metadata:
+      source_data_type: CHAR
+      known_limitation: char_not_rendered_to_symbol
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+  - id: rw-itest
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="DB_For_Test"."iTest"
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: TEST_RW_ITEST
+    parameter_name: Test RW iTest
+    expected_type: int
+    unit: unit
+    write_enabled: true
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+  - id: rw-rtest
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="DB_For_Test"."rTest"
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: TEST_RW_RTEST
+    parameter_name: Test RW rTest
+    expected_type: float
+    unit: unit
+    write_enabled: true
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+  - id: rw-stest
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="DB_For_Test"."sTest"
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: TEST_RW_STEST
+    parameter_name: Test RW sTest
+    expected_type: str
+    unit: text
+    write_enabled: true
+    metadata:
+      source_data_type: STRING
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false

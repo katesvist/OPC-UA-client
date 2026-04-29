@@ -4,7 +4,7 @@ services:
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     restart: unless-stopped
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${OPC_REDIS_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -16,8 +16,8 @@ services:
     image: rabbitmq:4-management
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5672:5672"
-      - "127.0.0.1:15672:15672"
+      - "127.0.0.1:${OPC_RABBITMQ_PORT:-5673}:5672"
+      - "127.0.0.1:${OPC_RABBITMQ_MANAGEMENT_PORT:-15673}:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s
@@ -30,13 +30,13 @@ services:
       context: .
     restart: unless-stopped
     environment:
-      OPC_CONFIG_FILE: /service/examples/config.prosys.server.yaml
+      OPC_CONFIG_FILE: /service/runtime-config/config.full.docker.yaml
     volumes:
-      - ./examples/config.prosys.server.yaml:/service/examples/config.prosys.server.yaml
+      - ./runtime-config:/service/runtime-config
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${OPC_CLIENT_API_PORT:-8080}:8080"
     healthcheck:
       test:
         - CMD
@@ -47,7 +47,7 @@ services:
           import urllib.request
           req = urllib.request.Request(
               "http://127.0.0.1:8080/ready",
-              headers={"Authorization": "Bearer example-management-token"},
+              headers={"Authorization": "Bearer secret-token"},
           )
           try:
               with urllib.request.urlopen(req, timeout=3) as response:
