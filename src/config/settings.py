@@ -69,3 +69,8 @@ class AppSettings(BaseSettings):
 
 def load_settings() -> AppConfigModel:
     return AppSettings().to_model()
+
+
+def get_config_path() -> Path | None:
+    config_path = os.getenv("OPC_CONFIG_FILE")
+    return Path(config_path) if config_path else None

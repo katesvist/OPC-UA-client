@@ -5,7 +5,9 @@ from typing import cast
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
 
+from src.config.models import NodeRegistryEntry
 from src.domain.entities.errors import (
     BrowseError,
     ConnectionError,
@@ -23,6 +25,10 @@ from src.domain.entities.models import (
 from src.runtime import AppRuntime
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+
+class NodesConfigUpdate(BaseModel):
+    nodes: list[NodeRegistryEntry]
 
 
 async def get_runtime(request: Request) -> AppRuntime:
@@ -81,6 +87,34 @@ def build_router() -> APIRouter:
         _: None = Depends(authorize_request),
     ) -> list[dict[str, object]]:
         return [status_item.model_dump(mode="json") for status_item in runtime.registry.statuses()]
+
+    @router.get("/config/nodes")
+    async def config_nodes(
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> list[dict[str, object]]:
+        return [node.model_dump(mode="json") for node in runtime.registry.all()]
+
+    @router.put("/config/nodes")
+    async def replace_config_nodes(
+        payload: NodesConfigUpdate,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> dict[str, object]:
+        duplicate_ids = _duplicate_node_ids(payload.nodes)
+        if duplicate_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"message": "Duplicate node config ids.", "ids": duplicate_ids},
+            )
+        try:
+            results = await runtime.replace_nodes_config(payload.nodes)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        return {
+            "nodes": [node.model_dump(mode="json") for node in runtime.registry.all()],
+            "results": [item.model_dump(mode="json") for item in results],
+        }
 
     @router.get("/buffer/stats")
     async def buffer_stats(
@@ -164,3 +198,13 @@ def build_router() -> APIRouter:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return router
+
+
+def _duplicate_node_ids(nodes: list[NodeRegistryEntry]) -> list[str]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for node in nodes:
+        if node.id in seen:
+            duplicates.add(node.id)
+        seen.add(node.id)
+    return sorted(duplicates)

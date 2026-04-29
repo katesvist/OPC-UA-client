@@ -92,6 +92,9 @@ class NodeRegistryEntry(BaseModel):
     polling_interval_seconds: float = 5.0
     parameter_code: str
     parameter_name: str
+    dict_param_id: str | None = None
+    type_by_dict: str | None = None
+    unit_by_dict: str | None = None
     expected_type: Literal["bool", "int", "float", "str", "char", "datetime"] = "float"
     value_shape: Literal["scalar", "array", "object"] = "scalar"
     unit: str | None = None

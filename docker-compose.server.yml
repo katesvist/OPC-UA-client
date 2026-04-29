@@ -32,7 +32,7 @@ services:
     environment:
       OPC_CONFIG_FILE: /service/examples/config.prosys.server.yaml
     volumes:
-      - ./examples/config.prosys.server.yaml:/service/examples/config.prosys.server.yaml:ro
+      - ./examples/config.prosys.server.yaml:/service/examples/config.prosys.server.yaml
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

@@ -6,8 +6,10 @@ from src.adapters.buffer.factory import create_buffer
 from src.adapters.logging.setup import configure_logging, get_logger
 from src.adapters.metrics.registry import MetricsRegistry
 from src.adapters.publisher.factory import create_publisher
-from src.config.models import AppConfigModel
-from src.config.settings import load_settings
+from src.config.models import AppConfigModel, NodeRegistryEntry
+from src.config.settings import get_config_path, load_settings
+from src.config.store import YamlConfigStore
+from src.domain.entities.models import NodeConfigApplyResult
 from src.domain.ports.buffer import EventBuffer
 from src.domain.ports.publisher import DownstreamPublisher
 from src.domain.services.buffer_worker import BufferedDeliveryWorker
@@ -28,6 +30,7 @@ class AppRuntime:
     connections: ConnectionsCoordinator
     health: HealthService
     buffer_worker: BufferedDeliveryWorker
+    config_store: YamlConfigStore
     buffer_ready: bool = False
 
     @classmethod
@@ -66,6 +69,7 @@ class AppRuntime:
             connections=connections,
             health=HealthService(),
             buffer_worker=buffer_worker,
+            config_store=YamlConfigStore(get_config_path()),
         )
         logger.info(
             "runtime_built",
@@ -87,3 +91,9 @@ class AppRuntime:
         await self.buffer_worker.stop()
         await self.publisher.close()
         await self.buffer.close()
+
+    async def replace_nodes_config(self, nodes: list[NodeRegistryEntry]) -> list[NodeConfigApplyResult]:
+        self.config_store.save_nodes(nodes)
+        results = await self.connections.replace_nodes(nodes)
+        self.config.nodes = self.registry.all()
+        return results

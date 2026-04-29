@@ -41,6 +41,9 @@ class ParameterEvent(BaseModel):
     owner_id: str
     parameter_code: str
     parameter_name: str
+    id_by_dict: str | None = None
+    type_by_dict: str | None = None
+    uom_by_dict: str | None = None
     node_id: str
     value_raw: Any = None
     value_normalized: Any = None
@@ -168,4 +171,14 @@ class WriteResult(BaseModel):
     node_id: str
     success: bool
     status_code: str
+    message: str | None = None
+
+
+class NodeConfigApplyResult(BaseModel):
+    node_id: str
+    config_id: str
+    endpoint_id: str
+    action: str
+    applied: bool
+    requires_endpoint_reconnect: bool = False
     message: str | None = None

@@ -6,7 +6,7 @@ services:
     environment:
       OPC_CONFIG_FILE: /service/examples/config.docker.yaml
     volumes:
-      - ./examples/config.docker.yaml:/service/examples/config.docker.yaml:ro
+      - ./examples/config.docker.yaml:/service/examples/config.docker.yaml
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:

@@ -53,9 +53,10 @@ class OpcUaConnectionManager:
         self._stop_event = asyncio.Event()
         self._reconnect_event = asyncio.Event()
         self._supervisor_task: asyncio.Task[None] | None = None
-        self._polling_tasks: list[asyncio.Task[None]] = []
+        self._polling_tasks: dict[str, asyncio.Task[None]] = {}
         self._client: Client | None = None
         self._subscription: Any = None
+        self._subscription_handles: dict[str, Any] = {}
         self._connected_since: datetime | None = None
         self._last_data_at: datetime | None = None
         self._last_error: str | None = None
@@ -64,6 +65,7 @@ class OpcUaConnectionManager:
         self._node_metadata: dict[str, dict[str, Any]] = {}
         self._disabled_node_ids: set[str] = set()
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._config_lock = asyncio.Lock()
 
     async def start(self) -> None:
         self._supervisor_task = asyncio.create_task(self._run(), name=f"opcua-connection-{self.endpoint.id}")
@@ -79,6 +81,46 @@ class OpcUaConnectionManager:
     async def reconnect(self) -> None:
         self._reconnect_event.set()
         await self._cleanup_connection()
+
+    async def activate_node(self, node_cfg: NodeRegistryEntry) -> tuple[bool, str]:
+        async with self._config_lock:
+            if self._client is None or self._state not in {ConnectionState.CONNECTED, ConnectionState.DEGRADED}:
+                self.registry.mark_active(node_cfg, False)
+                return False, "Endpoint is not connected; node will be applied on reconnect."
+            try:
+                self._disabled_node_ids.discard(node_cfg.node_id)
+                await self._load_node_metadata(node_cfg)
+                if node_cfg.node_id in self._disabled_node_ids:
+                    return False, "Node is not available in OPC UA address space."
+                if node_cfg.acquisition_mode == "polling":
+                    await self._start_polling_node(node_cfg)
+                else:
+                    await self._subscribe_node(node_cfg)
+                self._refresh_subscribed_metrics()
+                return True, "Node applied."
+            except Exception as exc:
+                self.registry.mark_error(node_cfg, str(exc))
+                return False, str(exc)
+
+    async def deactivate_node(self, node_cfg: NodeRegistryEntry) -> tuple[bool, str]:
+        async with self._config_lock:
+            polling_task = self._polling_tasks.pop(node_cfg.id, None)
+            if polling_task is not None:
+                polling_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await polling_task
+
+            handle = self._subscription_handles.pop(node_cfg.id, None)
+            if handle is not None and self._subscription is not None:
+                with suppress(Exception):
+                    await self._subscription.unsubscribe(handle)
+
+            self._node_metadata.pop(node_cfg.node_id, None)
+            self._disabled_node_ids.discard(node_cfg.node_id)
+            if self.registry.get(node_cfg.id) is not None:
+                self.registry.mark_active(node_cfg, False)
+            self._refresh_subscribed_metrics()
+            return True, "Node deactivated."
 
     def status(self) -> EndpointStatus:
         return EndpointStatus(
@@ -296,9 +338,7 @@ class OpcUaConnectionManager:
                     self.registry.mark_error(node_cfg, "Узел отключен: не найден в адресном пространстве OPC UA.")
                     continue
                 try:
-                    node = self._client.get_node(node_cfg.node_id)
-                    await self._subscription.subscribe_data_change(node)
-                    self.registry.mark_active(node_cfg, True)
+                    await self._subscribe_node(node_cfg)
                 except Exception as exc:
                     if self._is_missing_node_error(exc):
                         self._disable_node(node_cfg, str(exc))
@@ -317,9 +357,38 @@ class OpcUaConnectionManager:
             if node_cfg.node_id in self._disabled_node_ids:
                 self.registry.mark_error(node_cfg, "Узел отключен: не найден в адресном пространстве OPC UA.")
                 continue
-            task = asyncio.create_task(self._poll_node(node_cfg), name=f"poll-{self.endpoint.id}-{node_cfg.id}")
-            self._polling_tasks.append(task)
+            await self._start_polling_node(node_cfg)
+
+    async def _ensure_subscription(self) -> None:
+        if self._client is None:
+            raise ConnectionError("Клиент OPC UA не инициализирован.")
+        if self._subscription is not None:
+            return
+        handler = _SubscriptionHandler(self)
+        self._subscription = await self._client.create_subscription(
+            self.endpoint.subscription_defaults.publish_interval_ms,
+            handler,
+        )
+
+    async def _subscribe_node(self, node_cfg: NodeRegistryEntry) -> None:
+        if self._client is None:
+            raise ConnectionError("Клиент OPC UA не инициализирован.")
+        await self._ensure_subscription()
+        if node_cfg.id in self._subscription_handles:
             self.registry.mark_active(node_cfg, True)
+            return
+        node = self._client.get_node(node_cfg.node_id)
+        handle = await self._subscription.subscribe_data_change(node)
+        self._subscription_handles[node_cfg.id] = handle
+        self.registry.mark_active(node_cfg, True)
+
+    async def _start_polling_node(self, node_cfg: NodeRegistryEntry) -> None:
+        if node_cfg.id in self._polling_tasks and not self._polling_tasks[node_cfg.id].done():
+            self.registry.mark_active(node_cfg, True)
+            return
+        task = asyncio.create_task(self._poll_node(node_cfg), name=f"poll-{self.endpoint.id}-{node_cfg.id}")
+        self._polling_tasks[node_cfg.id] = task
+        self.registry.mark_active(node_cfg, True)
 
     async def _poll_node(self, node_cfg: NodeRegistryEntry) -> None:
         while not self._stop_event.is_set():
@@ -399,7 +468,7 @@ class OpcUaConnectionManager:
             self.logger.info("opcua_metadata_read_failed", node_id=node_cfg.node_id, error=str(exc))
 
     async def _cleanup_connection(self, preserve_state: bool = False) -> None:
-        for task in self._polling_tasks:
+        for task in self._polling_tasks.values():
             task.cancel()
         self._polling_tasks.clear()
         for task in list(self._background_tasks):
@@ -409,6 +478,7 @@ class OpcUaConnectionManager:
             with suppress(Exception):
                 await self._subscription.delete()
             self._subscription = None
+        self._subscription_handles.clear()
         if self._client is not None:
             with suppress(Exception):
                 await self._client.disconnect()
@@ -421,6 +491,16 @@ class OpcUaConnectionManager:
         if not preserve_state and self._state != ConnectionState.FAILED:
             self._state = ConnectionState.DISCONNECTED
         self.metrics.set_active_connection(self.endpoint.id, False)
+
+    def _refresh_subscribed_metrics(self) -> None:
+        active_subscription_nodes = [
+            node
+            for node in self.registry.by_endpoint(self.endpoint.id)
+            if node.acquisition_mode == "subscription"
+            and node.id in self._subscription_handles
+            and node.node_id not in self._disabled_node_ids
+        ]
+        self.metrics.set_subscribed_nodes(self.endpoint.id, len(active_subscription_nodes))
 
     async def _apply_security(self, client: Client) -> None:
         auth = self.endpoint.auth
