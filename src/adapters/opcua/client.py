@@ -618,8 +618,12 @@ class OpcUaConnectionManager:
                 except Exception:
                     return None
 
-            node_class = _val(attrs[0])
-            node_class_name = getattr(node_class, "name", str(node_class)) if node_class is not None else "Unknown"
+            node_class_raw = _val(attrs[0])
+            try:
+                node_class_enum = ua.NodeClass(int(node_class_raw)) if node_class_raw is not None else None
+            except (ValueError, TypeError):
+                node_class_enum = None
+            node_class_name = node_class_enum.name if node_class_enum is not None else "Unknown"
 
             if self._should_include_node(node_class_name, include_variables, include_objects):
                 browse_name = _val(attrs[1])

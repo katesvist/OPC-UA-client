@@ -71,6 +71,7 @@ endpoints:
   security_mode: None
   auth:
     mode: anonymous
+    password: '123'
   session_timeout_ms: 60000
   request_timeout_seconds: 10.0
   reconnect_policy:
