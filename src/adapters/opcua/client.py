@@ -650,8 +650,8 @@ class OpcUaConnectionManager:
                         node_class=node_class_name,
                         data_type=data_type if isinstance(data_type, str) else None,
                         value_rank=int(value_rank) if value_rank is not None else None,
-                        array_dimensions=array_dimensions,
-                        access_level=access_level or None,
+                        array_dimensions=array_dimensions if array_dimensions is not None else [],
+                        access_level=access_level,
                         has_children=bool(children),
                         depth=depth,
                     )
