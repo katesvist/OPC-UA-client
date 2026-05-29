@@ -100,12 +100,14 @@ class AppRuntime:
 
     async def replace_endpoints_config(self, endpoints: list[EndpointConfig]) -> None:
         self.config_store.save_endpoints(endpoints)
-        old_ids = {e.id for e in self.config.endpoints}
+        old_by_id = {e.id: e for e in self.config.endpoints}
         new_ids = {e.id for e in endpoints}
-        for removed_id in old_ids - new_ids:
+        for removed_id in set(old_by_id) - new_ids:
             await self.connections.remove_endpoint(removed_id)
         for endpoint in endpoints:
-            await self.connections.upsert_endpoint(endpoint)
+            old = old_by_id.get(endpoint.id)
+            if old is None or old != endpoint:
+                await self.connections.upsert_endpoint(endpoint)
         remaining_nodes = [n for n in self.config.nodes if n.endpoint_id in new_ids]
         if len(remaining_nodes) != len(self.config.nodes):
             self.config_store.save_nodes(remaining_nodes)

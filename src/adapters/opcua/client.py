@@ -143,6 +143,7 @@ class OpcUaConnectionManager:
         client = self._require_client()
         start_node = client.get_node(node_id) if node_id else client.nodes.objects
         results: list[BrowseNodeResult] = []
+        semaphore = asyncio.Semaphore(10)
         try:
             await self._browse_recursive(
                 node=start_node,
@@ -153,6 +154,7 @@ class OpcUaConnectionManager:
                 include_variables=include_variables,
                 include_objects=include_objects,
                 is_root=True,
+                _semaphore=semaphore,
             )
         except NodeNotFoundError:
             raise
@@ -585,34 +587,75 @@ class OpcUaConnectionManager:
         include_variables: bool,
         include_objects: bool,
         is_root: bool = False,
+        _semaphore: asyncio.Semaphore | None = None,
     ) -> None:
+        if _semaphore is None:
+            _semaphore = asyncio.Semaphore(10)
+
         current_node_id = None
+        children: list[Any] = []
         try:
             current_node_id = node.nodeid.to_string()
-            node_class = await node.read_node_class()
-            node_class_name = getattr(node_class, "name", str(node_class))
+
+            # Batch: read all needed attributes + children + data type concurrently
+            # instead of 8 sequential OPC UA round-trips per node.
+            attrs, children, data_type = await asyncio.gather(
+                node.read_attributes([
+                    ua.AttributeIds.NodeClass,
+                    ua.AttributeIds.BrowseName,
+                    ua.AttributeIds.DisplayName,
+                    ua.AttributeIds.AccessLevel,
+                    ua.AttributeIds.ValueRank,
+                    ua.AttributeIds.ArrayDimensions,
+                ]),
+                node.get_children(),
+                self._read_data_type_name(node),
+            )
+
+            def _val(dv: Any) -> Any:
+                try:
+                    return dv.Value.Value if dv and dv.Value else None
+                except Exception:
+                    return None
+
+            node_class = _val(attrs[0])
+            node_class_name = getattr(node_class, "name", str(node_class)) if node_class is not None else "Unknown"
+
             if self._should_include_node(node_class_name, include_variables, include_objects):
-                browse_name = await node.read_browse_name()
-                display_name = await node.read_display_name()
-                children = await node.get_children()
-                access_level = await self._read_access_level(node)
+                browse_name = _val(attrs[1])
+                display_name = _val(attrs[2])
+                raw_access = _val(attrs[3])
+                value_rank = _val(attrs[4])
+                raw_array_dims = _val(attrs[5])
+
+                access_level: list[str] = []
+                if raw_access is not None:
+                    for lvl in ua.AccessLevel:
+                        if int(raw_access) & int(lvl):
+                            access_level.append(lvl.name)
+
+                array_dimensions: list[int] | None = None
+                if raw_array_dims is not None:
+                    if isinstance(raw_array_dims, (list, tuple)):
+                        array_dimensions = [int(x) for x in raw_array_dims]
+                    else:
+                        array_dimensions = [int(raw_array_dims)]
+
                 results.append(
                     BrowseNodeResult(
                         node_id=current_node_id,
                         parent_node_id=parent_node_id,
-                        browse_name=getattr(browse_name, "to_string", lambda: str(browse_name))(),
-                        display_name=getattr(display_name, "Text", str(display_name)),
+                        browse_name=getattr(browse_name, "to_string", lambda: str(browse_name))() if browse_name is not None else None,
+                        display_name=getattr(display_name, "Text", str(display_name)) if display_name is not None else None,
                         node_class=node_class_name,
-                        data_type=await self._read_data_type_name(node),
-                        value_rank=await self._read_value_rank(node),
-                        array_dimensions=await self._read_array_dimensions(node),
-                        access_level=access_level,
+                        data_type=data_type if isinstance(data_type, str) else None,
+                        value_rank=int(value_rank) if value_rank is not None else None,
+                        array_dimensions=array_dimensions,
+                        access_level=access_level or None,
                         has_children=bool(children),
                         depth=depth,
                     )
                 )
-            else:
-                children = await node.get_children()
         except ua.UaStatusCodeError as exc:
             if is_root:
                 raise NodeNotFoundError(f"Узел {current_node_id or parent_node_id or 'Objects'} не найден или недоступен: {exc}") from exc
@@ -638,17 +681,22 @@ class OpcUaConnectionManager:
 
         if depth >= max_depth:
             return
-        for child in children:
-            await self._browse_recursive(
-                node=child,
-                results=results,
-                parent_node_id=current_node_id,
-                depth=depth + 1,
-                max_depth=max_depth,
-                include_variables=include_variables,
-                include_objects=include_objects,
-                is_root=False,
-            )
+
+        # Process siblings concurrently — semaphore limits outstanding OPC UA requests.
+        async def _browse_child(child: Any) -> None:
+            async with _semaphore:
+                await self._browse_recursive(
+                    node=child,
+                    results=results,
+                    parent_node_id=current_node_id,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    include_variables=include_variables,
+                    include_objects=include_objects,
+                    _semaphore=_semaphore,
+                )
+
+        await asyncio.gather(*[_browse_child(child) for child in children], return_exceptions=True)
 
     def _should_include_node(self, node_class_name: str, include_variables: bool, include_objects: bool) -> bool:
         if node_class_name == "Variable":
