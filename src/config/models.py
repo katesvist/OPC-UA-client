@@ -6,6 +6,13 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, Field, SecretStr
 
 
+def _mask_endpoint(endpoint: "EndpointConfig") -> dict[str, Any]:
+    data = endpoint.model_dump(mode="json")
+    if data.get("auth", {}).get("password"):
+        data["auth"]["password"] = "***"
+    return data
+
+
 class ApiSettings(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8080
@@ -98,6 +105,9 @@ class NodeRegistryEntry(BaseModel):
     expected_type: Literal["bool", "int", "float", "str", "char", "datetime"] = "float"
     value_shape: Literal["scalar", "array", "object"] = "scalar"
     unit: str | None = None
+    group_id: str | None = None
+    group_path: list[str] = Field(default_factory=list)
+    group_display_name: str | None = None
     input_control: InputControlConfig = Field(
         default_factory=InputControlConfig,
         validation_alias=AliasChoices("input_control", "validation"),

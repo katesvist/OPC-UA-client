@@ -2,16 +2,13 @@ service:
   name: opc-ua-client-service
   environment: local
   mode: edge
-
 api:
   host: 0.0.0.0
   port: 8080
   management_token: example-management-token
-
 logging:
   level: INFO
   json_logs: true
-
 buffer:
   redis_url: redis://redis:6379/0
   key_prefix: opcua-client
@@ -21,7 +18,6 @@ buffer:
   retry_base_delay_seconds: 5
   retry_max_delay_seconds: 300
   retention_hours: 72
-
 publisher:
   mode: rabbitmq
   url: amqp://guest:guest@rabbitmq:5672/
@@ -33,82 +29,314 @@ publisher:
   declare_queue: true
   durable: true
   timeout_seconds: 5
-
 endpoints:
-  - id: rig-opc-primary
-    enabled: true
-    url: opc.tcp://mock-opcua-server:4840/freeopcua/server/
-    security_policy: None
-    security_mode: None
-    auth:
-      mode: anonymous
-    session_timeout_ms: 60000
-    request_timeout_seconds: 5
-    reconnect_policy:
-      initial_delay_seconds: 2
-      max_delay_seconds: 30
-      backoff_multiplier: 2
-      failure_threshold: 5
-    subscription_defaults:
-      publish_interval_ms: 1000
-      keepalive_count: 10
-      lifetime_count: 30
-      queue_size: 100
-    metadata:
-      source_id: rig-site-01
-      source_system_id: scada-main
-      owner_type: rig
-      owner_id: rig-01
-      site_id: pad-a
-      asset_id: pump-01
-      tags:
-        - edge
-        - opcua
-        - docker
-
+- id: rig-opc-primary
+  enabled: true
+  url: opc.tcp://mock-opcua-server:4840/freeopcua/server/
+  security_policy: None
+  security_mode: None
+  auth:
+    mode: anonymous
+  session_timeout_ms: 60000
+  request_timeout_seconds: 5.0
+  reconnect_policy:
+    initial_delay_seconds: 2.0
+    max_delay_seconds: 30.0
+    backoff_multiplier: 2.0
+    failure_threshold: 5
+  subscription_defaults:
+    publish_interval_ms: 1000
+    keepalive_count: 10
+    lifetime_count: 30
+    queue_size: 100
+  metadata:
+    source_id: rig-site-01
+    source_system_id: scada-main
+    owner_type: rig
+    owner_id: rig-01
+    site_id: pad-a
+    asset_id: pump-01
+    tags:
+    - edge
+    - opcua
+    - docker
+- id: rig-opc-server
+  enabled: false
+  url: opc.tcp://192.168.1.100:4840
+  security_policy: None
+  security_mode: None
+  auth:
+    mode: anonymous
+  session_timeout_ms: 60000
+  request_timeout_seconds: 10.0
+  reconnect_policy:
+    initial_delay_seconds: 2.0
+    max_delay_seconds: 30.0
+    backoff_multiplier: 2.0
+    failure_threshold: 5
+  subscription_defaults:
+    publish_interval_ms: 1000
+    keepalive_count: 10
+    lifetime_count: 30
+    queue_size: 100
+  metadata:
+    source_id: rig-site-01
+    source_system_id: scada-main
+    owner_type: rig
+    owner_id: rig-01
+    site_id: pad-a
+    asset_id: pump-01
+    tags: []
 nodes:
-  - id: pump01-pressure
-    endpoint_id: rig-opc-primary
-    node_id: ns=2;s=Pump01.Pressure
-    namespace_uri: urn:opcua:mvp
-    acquisition_mode: subscription
-    sampling_interval_ms: 1000
-    parameter_code: PUMP_PRESSURE
-    parameter_name: Давление насоса
-    expected_type: float
-    unit: bar
-    input_control:
-      stale_after_seconds: 30
-      suppress_duplicates: false
-    value_transform:
-      scale_factor: 1.0
-      offset: 0.0
-      target_unit: bar
-    metadata:
-      subsystem: pumping
-      criticality: high
-    tags:
-      - pressure
-      - pump
-  - id: pump01-temperature
-    endpoint_id: rig-opc-primary
-    node_id: ns=2;s=Pump01.Temperature
-    namespace_uri: urn:opcua:mvp
-    acquisition_mode: polling
-    polling_interval_seconds: 2
-    parameter_code: PUMP_TEMPERATURE
-    parameter_name: Температура насоса
-    expected_type: float
-    unit: celsius
-    input_control:
-      stale_after_seconds: 60
-      suppress_duplicates: false
-    value_transform:
-      scale_factor: 1.0
-      offset: 0.0
-      target_unit: celsius
-    metadata:
-      subsystem: pumping
-    tags:
-      - temperature
-      - pump
+- id: rig-opc-primary-0-auditing
+  endpoint_id: rig-opc-primary
+  node_id: i=2994
+  browse_name: 0:Auditing
+  display_name: Auditing
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: 0:Auditing
+  parameter_name: Auditing
+  expected_type: float
+  value_shape: scalar
+  group_id: rig-opc-primary-0-server
+  group_path:
+  - 0:Server
+  group_display_name: Server
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata:
+    opcua_browse_name: 0:Auditing
+    opcua_display_name: Auditing
+    opcua_data_type: Boolean
+  tags: []
+- id: rig-opc-primary-0-estimatedreturntime
+  endpoint_id: rig-opc-primary
+  node_id: i=12885
+  browse_name: 0:EstimatedReturnTime
+  display_name: EstimatedReturnTime
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: 0:EstimatedReturnTime
+  parameter_name: EstimatedReturnTime
+  expected_type: float
+  value_shape: scalar
+  group_id: rig-opc-primary-0-server
+  group_path:
+  - 0:Server
+  group_display_name: Server
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata:
+    opcua_browse_name: 0:EstimatedReturnTime
+    opcua_display_name: EstimatedReturnTime
+    opcua_data_type: DateTime
+  tags: []
+- id: rig-opc-primary-0-localtime
+  endpoint_id: rig-opc-primary
+  node_id: i=17634
+  browse_name: 0:LocalTime
+  display_name: LocalTime
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: 0:LocalTime
+  parameter_name: LocalTime
+  expected_type: float
+  value_shape: scalar
+  group_id: rig-opc-primary-0-server
+  group_path:
+  - 0:Server
+  group_display_name: Server
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata:
+    opcua_browse_name: 0:LocalTime
+    opcua_display_name: LocalTime
+    opcua_data_type: ExtensionObject
+  tags: []
+- id: rig-opc-primary-0-namespacearray
+  endpoint_id: rig-opc-primary
+  node_id: i=2255
+  browse_name: 0:NamespaceArray
+  display_name: NamespaceArray
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: 0:NamespaceArray
+  parameter_name: NamespaceArray
+  expected_type: float
+  value_shape: scalar
+  group_id: rig-opc-primary-0-server
+  group_path:
+  - 0:Server
+  group_display_name: Server
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata:
+    opcua_browse_name: 0:NamespaceArray
+    opcua_display_name: NamespaceArray
+    opcua_data_type: String
+  tags: []
+- id: rig-opc-primary-0-serverarray
+  endpoint_id: rig-opc-primary
+  node_id: i=2254
+  browse_name: 0:ServerArray
+  display_name: ServerArray
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: 0:ServerArray
+  parameter_name: ServerArray
+  expected_type: float
+  value_shape: scalar
+  group_id: rig-opc-primary-0-server
+  group_path:
+  - 0:Server
+  group_display_name: Server
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata:
+    opcua_browse_name: 0:ServerArray
+    opcua_display_name: ServerArray
+    opcua_data_type: String
+  tags: []
+- id: rig-opc-primary-0-serverstatus
+  endpoint_id: rig-opc-primary
+  node_id: i=2256
+  browse_name: 0:ServerStatus
+  display_name: ServerStatus
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: 0:ServerStatus
+  parameter_name: ServerStatus
+  expected_type: float
+  value_shape: scalar
+  group_id: rig-opc-primary-0-server
+  group_path:
+  - 0:Server
+  group_display_name: Server
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata:
+    opcua_browse_name: 0:ServerStatus
+    opcua_display_name: ServerStatus
+    opcua_data_type: ExtensionObject
+  tags: []
+- id: rig-opc-primary-0-servicelevel
+  endpoint_id: rig-opc-primary
+  node_id: i=2267
+  browse_name: 0:ServiceLevel
+  display_name: ServiceLevel
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: 0:ServiceLevel
+  parameter_name: ServiceLevel
+  expected_type: float
+  value_shape: scalar
+  group_id: rig-opc-primary-0-server
+  group_path:
+  - 0:Server
+  group_display_name: Server
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata:
+    opcua_browse_name: 0:ServiceLevel
+    opcua_display_name: ServiceLevel
+    opcua_data_type: Byte
+  tags: []
+- id: rig-opc-primary-0-urisversion
+  endpoint_id: rig-opc-primary
+  node_id: i=15004
+  browse_name: 0:UrisVersion
+  display_name: UrisVersion
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: 0:UrisVersion
+  parameter_name: UrisVersion
+  expected_type: float
+  value_shape: scalar
+  group_id: rig-opc-primary-0-server
+  group_path:
+  - 0:Server
+  group_display_name: Server
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata:
+    opcua_browse_name: 0:UrisVersion
+    opcua_display_name: UrisVersion
+    opcua_data_type: UInt32
+  tags: []
+- id: test-node
+  endpoint_id: rig-opc-primary
+  node_id: ns=2;s=Pump01.Pressure
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  polling_interval_seconds: 5.0
+  parameter_code: TEST
+  parameter_name: Test
+  expected_type: float
+  value_shape: scalar
+  group_path: []
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata: {}
+  tags: []

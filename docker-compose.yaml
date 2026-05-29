@@ -4,9 +4,9 @@ services:
       context: .
     restart: unless-stopped
     environment:
-      OPC_CONFIG_FILE: /service/examples/config.docker.yaml
+      OPC_CONFIG_FILE: /service/runtime-config/config.full.docker.yaml
     volumes:
-      - ./examples/config.docker.yaml:/service/examples/config.docker.yaml
+      - ./runtime-config/config.full.docker.yaml:/service/runtime-config/config.full.docker.yaml
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
@@ -19,7 +19,7 @@ services:
           import urllib.request
           req = urllib.request.Request(
               "http://127.0.0.1:8080/ready",
-              headers={"Authorization": "Bearer example-management-token"},
+              headers={"Authorization": "Bearer secret-token"},
           )
           try:
               with urllib.request.urlopen(req, timeout=3) as response:
@@ -27,8 +27,6 @@ services:
           except Exception:
               sys.exit(1)
     depends_on:
-      mock-opcua-server:
-        condition: service_healthy
       redis:
         condition: service_healthy
       rabbitmq:

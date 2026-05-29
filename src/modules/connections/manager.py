@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from src.adapters.metrics.registry import MetricsRegistry
 from src.adapters.opcua.client import OpcUaConnectionManager
-from src.config.models import EndpointConfig, NodeRegistryEntry
+from src.config.models import EndpointConfig, NodeRegistryEntry, _mask_endpoint
 from src.domain.entities.errors import EndpointNotFoundError
 from src.domain.entities.models import BrowseNodeResult, EndpointStatus, NodeConfigApplyResult, ReadResult, WriteResult
 from src.domain.services.pipeline import EventPipeline
@@ -17,6 +17,9 @@ class ConnectionsCoordinator:
         pipeline: EventPipeline,
         metrics: MetricsRegistry,
     ) -> None:
+        self._pipeline = pipeline
+        self._metrics = metrics
+        self._all_endpoints: dict[str, EndpointConfig] = {e.id: e for e in endpoints}
         self._managers = {
             endpoint.id: OpcUaConnectionManager(endpoint, registry, pipeline, metrics)
             for endpoint in endpoints
@@ -138,6 +141,30 @@ class ConnectionsCoordinator:
             )
 
         return results
+
+    async def upsert_endpoint(self, endpoint_cfg: EndpointConfig) -> None:
+        existing = self._managers.pop(endpoint_cfg.id, None)
+        if existing is not None:
+            await existing.stop()
+        self._all_endpoints[endpoint_cfg.id] = endpoint_cfg
+        if endpoint_cfg.enabled:
+            manager = OpcUaConnectionManager(endpoint_cfg, self.registry, self._pipeline, self._metrics)
+            self._managers[endpoint_cfg.id] = manager
+            await manager.start()
+
+    async def remove_endpoint(self, endpoint_id: str) -> None:
+        self._all_endpoints.pop(endpoint_id, None)
+        manager = self._managers.pop(endpoint_id, None)
+        if manager is not None:
+            await manager.stop()
+        for node in list(self.registry.by_endpoint(endpoint_id)):
+            self.registry.remove(node.id)
+
+    def endpoints_config(self) -> list[EndpointConfig]:
+        return list(self._all_endpoints.values())
+
+    def endpoints_masked(self) -> list[dict]:
+        return [_mask_endpoint(e) for e in self._all_endpoints.values()]
 
     def _get_manager(self, endpoint_id: str) -> OpcUaConnectionManager:
         manager = self._managers.get(endpoint_id)

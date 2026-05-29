@@ -6,7 +6,7 @@ from src.adapters.buffer.factory import create_buffer
 from src.adapters.logging.setup import configure_logging, get_logger
 from src.adapters.metrics.registry import MetricsRegistry
 from src.adapters.publisher.factory import create_publisher
-from src.config.models import AppConfigModel, NodeRegistryEntry
+from src.config.models import AppConfigModel, EndpointConfig, NodeRegistryEntry
 from src.config.settings import get_config_path, load_settings
 from src.config.store import YamlConfigStore
 from src.domain.entities.models import NodeConfigApplyResult
@@ -97,3 +97,17 @@ class AppRuntime:
         results = await self.connections.replace_nodes(nodes)
         self.config.nodes = self.registry.all()
         return results
+
+    async def replace_endpoints_config(self, endpoints: list[EndpointConfig]) -> None:
+        self.config_store.save_endpoints(endpoints)
+        old_ids = {e.id for e in self.config.endpoints}
+        new_ids = {e.id for e in endpoints}
+        for removed_id in old_ids - new_ids:
+            await self.connections.remove_endpoint(removed_id)
+        for endpoint in endpoints:
+            await self.connections.upsert_endpoint(endpoint)
+        remaining_nodes = [n for n in self.config.nodes if n.endpoint_id in new_ids]
+        if len(remaining_nodes) != len(self.config.nodes):
+            self.config_store.save_nodes(remaining_nodes)
+            self.config.nodes = remaining_nodes
+        self.config.endpoints = endpoints

@@ -2,16 +2,13 @@ service:
   name: opc-ua-client-service
   environment: windows-real-test
   mode: edge
-
 api:
   host: 0.0.0.0
   port: 8080
   management_token: secret-token
-
 logging:
   level: INFO
   json_logs: true
-
 buffer:
   redis_url: redis://redis:6379/0
   key_prefix: opcua-client
@@ -21,7 +18,6 @@ buffer:
   retry_base_delay_seconds: 5
   retry_max_delay_seconds: 300
   retention_hours: 72
-
 publisher:
   mode: rabbitmq
   url: amqp://guest:guest@rabbitmq:5672/
@@ -30,132 +26,613 @@ publisher:
   routing_key: validator.in.q
   queue_name: validator.in.q
   message_format: params_validator_envelope
-  schema_version: "1.0"
+  schema_version: '1.0'
   declare_exchange: true
   declare_queue: true
   durable: true
   timeout_seconds: 5
-
 endpoints:
-  - id: remote-opc-server
-    enabled: true
-    url: opc.tcp://192.168.0.120:4840
-    security_policy: None
-    security_mode: None
-    auth:
-      mode: username_password
-      username: user3
-      password: "12345678"
-    session_timeout_ms: 60000
-    request_timeout_seconds: 5
-    reconnect_policy:
-      initial_delay_seconds: 2
-      max_delay_seconds: 30
-      backoff_multiplier: 2
-      failure_threshold: 5
-    subscription_defaults:
-      publish_interval_ms: 1000
-      keepalive_count: 10
-      lifetime_count: 30
-      queue_size: 100
-    metadata:
-      source_id: remote-opc-lab
-      source_system_id: opc-server-192-168-0-120
-      owner_type: rig
-      owner_id: rig-01
-      site_id: remote-lab
-      asset_id: opc-sim
-      tags:
-        - edge
-        - opcua
-        - windows
-
+- id: remote-opc-server
+  enabled: true
+  url: opc.tcp://192.168.0.120:4840
+  security_policy: None
+  security_mode: None
+  auth:
+    mode: username_password
+    username: user3
+    password: '12345678'
+  session_timeout_ms: 60000
+  request_timeout_seconds: 5.0
+  reconnect_policy:
+    initial_delay_seconds: 2.0
+    max_delay_seconds: 30.0
+    backoff_multiplier: 2.0
+    failure_threshold: 5
+  subscription_defaults:
+    publish_interval_ms: 1000
+    keepalive_count: 10
+    lifetime_count: 30
+    queue_size: 100
+  metadata:
+    source_id: remote-opc-lab
+    source_system_id: opc-server-192-168-0-120
+    owner_type: rig
+    owner_id: rig-01
+    site_id: remote-lab
+    asset_id: opc-sim
+    tags:
+    - edge
+    - opcua
+    - windows
+- id: mock-opcua-server
+  enabled: true
+  url: opc.tcp://mock-opcua-server:4840/freeopcua/server/
+  security_policy: None
+  security_mode: None
+  auth:
+    mode: anonymous
+  session_timeout_ms: 60000
+  request_timeout_seconds: 10.0
+  reconnect_policy:
+    initial_delay_seconds: 2.0
+    max_delay_seconds: 30.0
+    backoff_multiplier: 2.0
+    failure_threshold: 5
+  subscription_defaults:
+    publish_interval_ms: 1000
+    keepalive_count: 10
+    lifetime_count: 30
+    queue_size: 100
+  metadata:
+    source_id: mock-site-01
+    owner_type: rig
+    owner_id: rig-01
+    tags: []
 nodes:
-  - id: rw-float
-    endpoint_id: remote-opc-server
-    node_id: ns=3;s="OPC_Data_exchange"."OPC_Dif_Pressure_Reg_Limit"
-    acquisition_mode: polling
-    polling_interval_seconds: 2
-    parameter_code: TEST_RW_FLOAT
-    parameter_name: Test RW Float
-    expected_type: float
-    unit: unit
-    write_enabled: true
-    input_control:
-      stale_after_seconds: 30
-      suppress_duplicates: false
-
-  - id: rw-bool
-    endpoint_id: remote-opc-server
-    node_id: ns=3;s="OPC_Data_exchange"."OPC_Load_Reg_Setpoint_Visible"
-    acquisition_mode: polling
-    polling_interval_seconds: 2
-    parameter_code: TEST_RW_BOOL
-    parameter_name: Test RW Bool
-    expected_type: bool
-    unit: state
-    write_enabled: true
-    input_control:
-      stale_after_seconds: 30
-      suppress_duplicates: false
-
-  - id: rw-ctest
-    endpoint_id: remote-opc-server
-    node_id: ns=3;s="DB_For_Test"."cTest"
-    acquisition_mode: subscription
-    sampling_interval_ms: 1000
-    parameter_code: TEST_RW_CTEST
-    parameter_name: Test RW cTest
-    expected_type: char
-    unit: char
-    write_enabled: true
-    metadata:
-      source_data_type: CHAR
-      known_limitation: char_not_rendered_to_symbol
-    input_control:
-      stale_after_seconds: 30
-      suppress_duplicates: false
-
-  - id: rw-itest
-    endpoint_id: remote-opc-server
-    node_id: ns=3;s="DB_For_Test"."iTest"
-    acquisition_mode: subscription
-    sampling_interval_ms: 1000
-    parameter_code: TEST_RW_ITEST
-    parameter_name: Test RW iTest
-    expected_type: int
-    unit: unit
-    write_enabled: true
-    input_control:
-      stale_after_seconds: 30
-      suppress_duplicates: false
-
-  - id: rw-rtest
-    endpoint_id: remote-opc-server
-    node_id: ns=3;s="DB_For_Test"."rTest"
-    acquisition_mode: subscription
-    sampling_interval_ms: 1000
-    parameter_code: TEST_RW_RTEST
-    parameter_name: Test RW rTest
-    expected_type: float
-    unit: unit
-    write_enabled: true
-    input_control:
-      stale_after_seconds: 30
-      suppress_duplicates: false
-
-  - id: rw-stest
-    endpoint_id: remote-opc-server
-    node_id: ns=3;s="DB_For_Test"."sTest"
-    acquisition_mode: subscription
-    sampling_interval_ms: 1000
-    parameter_code: TEST_RW_STEST
-    parameter_name: Test RW sTest
-    expected_type: str
-    unit: text
-    write_enabled: true
-    metadata:
-      source_data_type: STRING
-    input_control:
-      stale_after_seconds: 30
-      suppress_duplicates: false
+- id: mock-opcua-server-0-builddate
+  endpoint_id: mock-opcua-server
+  node_id: i=2266
+  browse_name: 0:BuildDate
+  display_name: BuildDate
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_path:
+  - 0:ServerStatus
+  - 0:BuildInfo
+  group_display_name: BuildInfo
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:BuildDate
+    opcua_display_name: BuildDate
+    opcua_data_type: DateTime
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-buildinfo
+  endpoint_id: mock-opcua-server
+  node_id: i=2260
+  browse_name: 0:BuildInfo
+  display_name: BuildInfo
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus
+  group_path:
+  - 0:ServerStatus
+  group_display_name: ServerStatus
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:BuildInfo
+    opcua_display_name: BuildInfo
+    opcua_data_type: ExtensionObject
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-buildnumber
+  endpoint_id: mock-opcua-server
+  node_id: i=2265
+  browse_name: 0:BuildNumber
+  display_name: BuildNumber
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_path:
+  - 0:ServerStatus
+  - 0:BuildInfo
+  group_display_name: BuildInfo
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:BuildNumber
+    opcua_display_name: BuildNumber
+    opcua_data_type: String
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-currenttime
+  endpoint_id: mock-opcua-server
+  node_id: i=2258
+  browse_name: 0:CurrentTime
+  display_name: CurrentTime
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus
+  group_path:
+  - 0:ServerStatus
+  group_display_name: ServerStatus
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:CurrentTime
+    opcua_display_name: CurrentTime
+    opcua_data_type: DateTime
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-manufacturername
+  endpoint_id: mock-opcua-server
+  node_id: i=2263
+  browse_name: 0:ManufacturerName
+  display_name: ManufacturerName
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_path:
+  - 0:ServerStatus
+  - 0:BuildInfo
+  group_display_name: BuildInfo
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:ManufacturerName
+    opcua_display_name: ManufacturerName
+    opcua_data_type: String
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-productname
+  endpoint_id: mock-opcua-server
+  node_id: i=2261
+  browse_name: 0:ProductName
+  display_name: ProductName
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_path:
+  - 0:ServerStatus
+  - 0:BuildInfo
+  group_display_name: BuildInfo
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:ProductName
+    opcua_display_name: ProductName
+    opcua_data_type: String
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-producturi
+  endpoint_id: mock-opcua-server
+  node_id: i=2262
+  browse_name: 0:ProductUri
+  display_name: ProductUri
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_path:
+  - 0:ServerStatus
+  - 0:BuildInfo
+  group_display_name: BuildInfo
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:ProductUri
+    opcua_display_name: ProductUri
+    opcua_data_type: String
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-secondstillshutdown
+  endpoint_id: mock-opcua-server
+  node_id: i=2992
+  browse_name: 0:SecondsTillShutdown
+  display_name: SecondsTillShutdown
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus
+  group_path:
+  - 0:ServerStatus
+  group_display_name: ServerStatus
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:SecondsTillShutdown
+    opcua_display_name: SecondsTillShutdown
+    opcua_data_type: UInt32
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-shutdownreason
+  endpoint_id: mock-opcua-server
+  node_id: i=2993
+  browse_name: 0:ShutdownReason
+  display_name: ShutdownReason
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus
+  group_path:
+  - 0:ServerStatus
+  group_display_name: ServerStatus
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:ShutdownReason
+    opcua_display_name: ShutdownReason
+    opcua_data_type: LocalizedText
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-softwareversion
+  endpoint_id: mock-opcua-server
+  node_id: i=2264
+  browse_name: 0:SoftwareVersion
+  display_name: SoftwareVersion
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_path:
+  - 0:ServerStatus
+  - 0:BuildInfo
+  group_display_name: BuildInfo
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:SoftwareVersion
+    opcua_display_name: SoftwareVersion
+    opcua_data_type: String
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-starttime
+  endpoint_id: mock-opcua-server
+  node_id: i=2257
+  browse_name: 0:StartTime
+  display_name: StartTime
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus
+  group_path:
+  - 0:ServerStatus
+  group_display_name: ServerStatus
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:StartTime
+    opcua_display_name: StartTime
+    opcua_data_type: DateTime
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: mock-opcua-server-0-state
+  endpoint_id: mock-opcua-server
+  node_id: i=2259
+  browse_name: 0:State
+  display_name: State
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: false
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: ASPD.APD1.Load.Descent.Warning_Zone
+  parameter_name: Зона предупреждения нагрузки при Спуске [тс]
+  dict_param_id: b5da8e6b-5b27-4c30-b577-e3441a753817
+  expected_type: float
+  value_shape: scalar
+  unit: тс
+  group_id: mock-opcua-server-0-serverstatus
+  group_path:
+  - 0:ServerStatus
+  group_display_name: ServerStatus
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+    target_unit: тс
+  metadata:
+    opcua_browse_name: 0:State
+    opcua_display_name: State
+    opcua_data_type: Int32
+    dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
+    dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
+  tags: []
+- id: rw-bool
+  endpoint_id: remote-opc-server
+  node_id: ns=3;s="OPC_Data_exchange"."OPC_Load_Reg_Setpoint_Visible"
+  acquisition_mode: polling
+  read_enabled: true
+  write_enabled: true
+  polling_interval_seconds: 2.0
+  parameter_code: TEST_RW_BOOL
+  parameter_name: Test RW Bool
+  expected_type: bool
+  value_shape: scalar
+  unit: state
+  group_path: []
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata: {}
+  tags: []
+- id: rw-ctest
+  endpoint_id: remote-opc-server
+  node_id: ns=3;s="DB_For_Test"."cTest"
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: true
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: TEST_RW_CTEST
+  parameter_name: Test RW cTest
+  expected_type: char
+  value_shape: scalar
+  unit: char
+  group_path: []
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata:
+    source_data_type: CHAR
+    known_limitation: char_not_rendered_to_symbol
+  tags: []
+- id: rw-float
+  endpoint_id: remote-opc-server
+  node_id: ns=3;s="OPC_Data_exchange"."OPC_Dif_Pressure_Reg_Limit"
+  acquisition_mode: polling
+  read_enabled: true
+  write_enabled: true
+  polling_interval_seconds: 2.0
+  parameter_code: TEST_RW_FLOAT
+  parameter_name: Test RW Float
+  expected_type: float
+  value_shape: scalar
+  unit: unit
+  group_path: []
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata: {}
+  tags: []
+- id: rw-itest
+  endpoint_id: remote-opc-server
+  node_id: ns=3;s="DB_For_Test"."iTest"
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: true
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: TEST_RW_ITEST
+  parameter_name: Test RW iTest
+  expected_type: int
+  value_shape: scalar
+  unit: unit
+  group_path: []
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata: {}
+  tags: []
+- id: rw-rtest
+  endpoint_id: remote-opc-server
+  node_id: ns=3;s="DB_For_Test"."rTest"
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: true
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: TEST_RW_RTEST
+  parameter_name: Test RW rTest
+  expected_type: float
+  value_shape: scalar
+  unit: unit
+  group_path: []
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata: {}
+  tags: []
+- id: rw-stest
+  endpoint_id: remote-opc-server
+  node_id: ns=3;s="DB_For_Test"."sTest"
+  acquisition_mode: subscription
+  read_enabled: true
+  write_enabled: true
+  sampling_interval_ms: 1000
+  polling_interval_seconds: 5.0
+  parameter_code: TEST_RW_STEST
+  parameter_name: Test RW sTest
+  expected_type: str
+  value_shape: scalar
+  unit: text
+  group_path: []
+  input_control:
+    stale_after_seconds: 30
+    suppress_duplicates: false
+  value_transform:
+    scale_factor: 1.0
+    offset: 0.0
+  metadata:
+    source_data_type: STRING
+  tags: []

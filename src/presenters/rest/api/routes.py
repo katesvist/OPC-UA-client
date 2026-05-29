@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from src.config.models import NodeRegistryEntry
+from src.config.models import EndpointConfig, NodeRegistryEntry
 from src.domain.entities.errors import (
     BrowseError,
     ConnectionError,
@@ -17,6 +17,7 @@ from src.domain.entities.errors import (
     NodeWriteError,
     WriteNotAllowedError,
 )
+from src.config.models import _mask_endpoint
 from src.domain.entities.models import (
     BrowseRequest,
     ReadRequest,
@@ -196,6 +197,61 @@ def build_router() -> APIRouter:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
         except NodeWriteError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    @router.get("/config/endpoints")
+    async def config_endpoints(
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> list[dict[str, object]]:
+        return runtime.connections.endpoints_masked()
+
+    @router.post("/config/endpoints", status_code=status.HTTP_201_CREATED)
+    async def create_endpoint(
+        payload: EndpointConfig,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> dict[str, object]:
+        existing_ids = {e.id for e in runtime.connections.endpoints_config()}
+        if payload.id in existing_ids:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Endpoint {payload.id} уже существует.",
+            )
+        new_endpoints = [*runtime.connections.endpoints_config(), payload]
+        await runtime.replace_endpoints_config(new_endpoints)
+        return _mask_endpoint(payload)
+
+    @router.put("/config/endpoints/{endpoint_id}")
+    async def update_endpoint(
+        endpoint_id: str,
+        payload: EndpointConfig,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> dict[str, object]:
+        existing = next((e for e in runtime.connections.endpoints_config() if e.id == endpoint_id), None)
+        if existing is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Endpoint {endpoint_id} не найден.")
+        # Preserve existing password when client sends null
+        if payload.auth.password is None and existing.auth.password is not None:
+            updated_auth = payload.auth.model_copy(update={"password": existing.auth.password})
+            payload = payload.model_copy(update={"id": endpoint_id, "auth": updated_auth})
+        else:
+            payload = payload.model_copy(update={"id": endpoint_id})
+        updated = [payload if e.id == endpoint_id else e for e in runtime.connections.endpoints_config()]
+        await runtime.replace_endpoints_config(updated)
+        return _mask_endpoint(payload)
+
+    @router.delete("/config/endpoints/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_endpoint(
+        endpoint_id: str,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> None:
+        existing_ids = {e.id for e in runtime.connections.endpoints_config()}
+        if endpoint_id not in existing_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Endpoint {endpoint_id} не найден.")
+        remaining = [e for e in runtime.connections.endpoints_config() if e.id != endpoint_id]
+        await runtime.replace_endpoints_config(remaining)
 
     return router
 

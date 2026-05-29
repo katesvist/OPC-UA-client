@@ -1,42 +1,41 @@
 # OPC UA Client Service
 
-Небольшой async-сервис на Python, который:
+async-сервис на Python, который:
 - подключается к OPC UA серверу;
 - подписывается на нужные ноды;
-- получает live-значения и метаданные OPC UA;
+- получает live-значения и метаданные c OPC UA;
 - упаковывает их в единое transport-событие;
 - отправляет событие в RabbitMQ;
 - если RabbitMQ недоступен, временно складывает события в Redis и потом доотправляет.
 
 Сервис не занимается бизнес-логикой, аналитикой и глобальным справочником параметров. Его зона ответственности: transport, reconnect, буферизация, публикация и диагностика.
 
-## Что реально умеет сейчас
+## Что умеет сейчас
 
 - OPC UA connect / reconnect / resubscribe
 - subscription mode
-- polling fallback
-- захват `value`, `source_timestamp`, `server_timestamp`, `status_code`, `browse_name`, `display_name`, `data_type`
-- публикация в RabbitMQ в нативном формате клиента или в envelope для `params-validator`
+- polling mode
+- захват `value`, `source_timestamp`, `server_timestamp`, `status_code`, `browse_name`, `display_name`, `data_type` и метаданные
+- публикация в RabbitMQ
 - временный буфер в Redis
 - retry worker для Redis -> RabbitMQ
+- один клиент может подключаться ко множеству OPC UA
 - технический API:
   - `GET /health`
   - `GET /ready`
   - `GET /metrics`
   - `GET /connections`
-  - `GET /subscriptions`
   - `GET /buffer/stats`
   - `GET /dead-letter`
+- функциональный API:
+  - `GET /subscriptions`
   - `POST /connections/{endpoint_id}/reconnect`
   - `POST /browse`
   - `POST /read`
   - `POST /write`
-  - `GET /config/nodes`
-  - `PUT /config/nodes`
 
-## Что сервис пока не делает
+## Что клиент не делает
 
-- не имеет frontend для настройки;
 - не хранит конфигурацию подключений и привязок в собственной БД;
 - не интегрирован со внешним справочником параметров;
 
@@ -45,7 +44,7 @@
 1. OPC UA клиент получает обновление по подписке.
 2. Обновление превращается в `Observation`.
 3. Pipeline приводит значение к ожидаемому типу и собирает `ParameterEvent`.
-4. Событие отправляется в RabbitMQ. Для интеграции с сервисом параметров publisher может преобразовать `ParameterEvent` в envelope валидатора (`payload.name`, `payload.value`, `payload.type`, `payload.id_by_dict`, `payload.uom_by_dict` и т.д.).
+4. Событие отправляется в RabbitMQ.
 5. Если RabbitMQ недоступен, событие попадает в Redis.
 6. Фоновый worker позже повторяет отправку из Redis.
 
@@ -60,6 +59,7 @@
 - duplicate suppression выключен;
 - deadband не применяется, пока не задан явно.
 
+Функция потенциально полезная, включить по необходимости
 
 ## Что такое value_transform
 
@@ -68,11 +68,11 @@
 - `offset`
 - `target_unit`
 
-полезно, если OPC UA источник отдаёт, например, "сырые" числа, которые нужно масштабировать
+полезно, если OPC UA источник отдаёт "сырые" числа, которые нужно нормализовать
 
 ## Конфиг нод
 
-Список нод и их operational-настройки живут внутри клиента (пока что).
+Список нод и их настройки живут внутри клиента, файл конфигурации подключения к одному или нескольким OPC UA серверам.
 
 Главная сущность: `NodeRegistryEntry`
 
@@ -89,9 +89,7 @@
 
 Это временный registry клиента, а не глобальный бизнес-справочник платформы.
 
-`PUT /config/nodes` заменяет секцию `nodes` в `OPC_CONFIG_FILE`, применяет diff в runtime и не требует reconnect endpoint для обычной смены маппинга. Если добавлена новая нода, клиент подписывается на неё через уже открытое OPC UA соединение; если нода удалена, клиент отписывается или останавливает polling-задачу.
-
-## Как поднять локально
+## Как поднять локально (базовая сборка клиента с mock-сервером)
 
 Через `make`:
 
@@ -118,67 +116,212 @@ make health
 - `redis`
 - `rabbitmq`
 
-`make up-server` поднимает клиент, Redis и RabbitMQ в Docker, а OPC UA сервер берется из full-конфига `runtime-config/config.full.docker.yaml`. Этот конфиг содержит и подключение, и текущий список нод. Дашборд меняет только секцию `nodes`, поэтому файл монтируется writable-директорией:
+## Запуск клиента в контейнере (с доступом к внешнему OPC UA источнику)
 
-```yaml
-OPC_CONFIG_FILE: /service/runtime-config/config.full.docker.yaml
-volumes:
-  - ./runtime-config:/service/runtime-config
+В docker-compose.server.yml прописать актуальные настройки контейнеров при необходимости. Базово использовать такие:
+
+```bash
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+
+  opcua-client:
+    build:
+      context: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      OPC_CONFIG_FILE: /service/config.full.docker.yaml
+    volumes:
+      - ./config.full.docker.yaml:/service/config.full.docker.yaml:ro
+    depends_on:
+      - redis
+      - rabbitmq
+
 ```
 
-В server-compose host-порты Redis/RabbitMQ сдвинуты, чтобы не конфликтовать с контейнерами сервиса параметров:
-- Redis: `127.0.0.1:6380 -> 6379`
-- RabbitMQ AMQP: `127.0.0.1:5673 -> 5672`
-- RabbitMQ UI: `127.0.0.1:15673 -> 15672`
+Затем создать в корне репо файл конфигурации config.full.docker.yaml. Прописать настройки подключения к внешнему OPC UA и подключить ноды. Для OPC UA Опербота конфигурация такая:
 
-Внутри docker-сети клиент всё равно публикует на `rabbitmq:5672`. Если нужно вернуть старые host-порты, можно переопределить `OPC_REDIS_PORT`, `OPC_RABBITMQ_PORT` и `OPC_RABBITMQ_MANAGEMENT_PORT`.
+```bash
+service:
+  name: opc-ua-client-service
+  environment: windows-real-test
+  mode: edge
 
-Для интеграции с params-validator в `runtime-config/config.full.docker.yaml` publisher настроен на:
+api:
+  host: 0.0.0.0
+  port: 8080
+  management_token: secret-token
 
-```yaml
+logging:
+  level: INFO
+  json_logs: true
+
+buffer:
+  redis_url: redis://redis:6379/0
+  key_prefix: opcua-client
+  max_attempts: 10
+  flush_batch_size: 100
+  flush_interval_seconds: 5
+  retry_base_delay_seconds: 5
+  retry_max_delay_seconds: 300
+  retention_hours: 72
+
 publisher:
-  exchange: validator.in.q
-  routing_key: validator.in.q
-  queue_name: validator.in.q
-  message_format: params_validator_envelope
+  mode: rabbitmq
+  url: amqp://guest:guest@rabbitmq:5672/
+  exchange: opcua.events
+  exchange_type: direct
+  routing_key: opcua.parameter.events
+  queue_name: opcua.parameter.events
+  declare_exchange: true
+  declare_queue: true
+  durable: true
+  timeout_seconds: 5
+
+endpoints:
+  - id: remote-opc-server
+    enabled: true
+    url: opc.tcp://192.168.0.120:4840
+    security_policy: None
+    security_mode: None
+    auth:
+      mode: username_password
+      username: user3
+      password: "12345678"
+    session_timeout_ms: 60000
+    request_timeout_seconds: 5
+    reconnect_policy:
+      initial_delay_seconds: 2
+      max_delay_seconds: 30
+      backoff_multiplier: 2
+      failure_threshold: 5
+    subscription_defaults:
+      publish_interval_ms: 1000
+      keepalive_count: 10
+      lifetime_count: 30
+      queue_size: 100
+    metadata:
+      source_id: remote-opc-lab
+      source_system_id: opc-server-192-168-0-120
+      owner_type: rig
+      owner_id: rig-01
+      site_id: remote-lab
+      asset_id: opc-sim
+      tags:
+        - edge
+        - opcua
+        - windows
+
+nodes:
+  - id: rw-float
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="OPC_Data_exchange"."OPC_Dif_Pressure_Reg_Limit"
+    acquisition_mode: polling
+    polling_interval_seconds: 2
+    parameter_code: TEST_RW_FLOAT
+    parameter_name: Test RW Float
+    expected_type: float
+    unit: unit
+    write_enabled: true
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+  - id: rw-bool
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="OPC_Data_exchange"."OPC_Load_Reg_Setpoint_Visible"
+    acquisition_mode: polling
+    polling_interval_seconds: 2
+    parameter_code: TEST_RW_BOOL
+    parameter_name: Test RW Bool
+    expected_type: bool
+    unit: state
+    write_enabled: true
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+
+  - id: rw-ctest
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="DB_For_Test"."cTest"
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: TEST_RW_CTEST
+    parameter_name: Test RW cTest
+    expected_type: char
+    unit: char
+    write_enabled: true
+    metadata:
+      source_data_type: CHAR
+      known_limitation: char_not_rendered_to_symbol
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+  - id: rw-itest
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="DB_For_Test"."iTest"
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: TEST_RW_ITEST
+    parameter_name: Test RW iTest
+    expected_type: int
+    unit: unit
+    write_enabled: true
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+  - id: rw-rtest
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="DB_For_Test"."rTest"
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: TEST_RW_RTEST
+    parameter_name: Test RW rTest
+    expected_type: float
+    unit: unit
+    write_enabled: true
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+  - id: rw-stest
+    endpoint_id: remote-opc-server
+    node_id: ns=3;s="DB_For_Test"."sTest"
+    acquisition_mode: subscription
+    sampling_interval_ms: 1000
+    parameter_code: TEST_RW_STEST
+    parameter_name: Test RW sTest
+    expected_type: str
+    unit: text
+    write_enabled: true
+    metadata:
+      source_data_type: STRING
+    input_control:
+      stale_after_seconds: 30
+      suppress_duplicates: false
+
+
 ```
 
-Очередь объявляется клиентом с DLX-аргументами, совместимыми с валидатором, чтобы не было конфликта деклараций RabbitMQ.
-
-Если нужен именно локальный docker-стенд целиком в контейнерах, можно запустить и напрямую:
+Затем из папки репозитория клиента:
 
 ```bash
-docker compose up --build -d
-docker compose ps
-docker compose logs -f opcua-client
+docker compose -f .\docker-compose.server.yml up --build -d
 ```
 
-Доступные адреса:
-- `http://127.0.0.1:8080` для API клиента
-- `opc.tcp://127.0.0.1:4840/freeopcua/server/` для mock OPC UA сервера
-- `http://127.0.0.1:15672` для UI RabbitMQ
-- `http://127.0.0.1:15673` для UI RabbitMQ server-compose
-
-Проверка готовности:
-
-```bash
-curl -s \
-  -H 'Authorization: Bearer example-management-token' \
-  http://127.0.0.1:8080/ready
-```
-
-Для контейнерного стенда используется отдельный файл `examples/config.docker.yaml`, потому что внутри Docker клиент должен обращаться к mock OPC UA серверу по имени сервиса `mock-opcua-server`, а не по `127.0.0.1`.
-
-Без `make`:
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -U pip
-pip install -e '.[dev]'
-export OPC_CONFIG_FILE=examples/config.edge.yaml
-uvicorn src.main:app --host 0.0.0.0 --port 8080
-```
 
 ## Переменные окружения
 
@@ -189,33 +332,6 @@ export OPC_CONFIG_FILE=examples/config.edge.yaml
 export OPC_API__MANAGEMENT_TOKEN=secret-token
 export OPC_PUBLISHER__URL=amqp://guest:guest@localhost:5672/
 export OPC_BUFFER__REDIS_URL=redis://localhost:6379/0
-```
-
-## Тесты
-
-Что лежит в `tests/`:
-
-- `tests/unit`
-  - проверка pipeline
-  - проверка quality/status classification
-  - проверка Redis buffer
-  - проверка технических входных ограничений
-- `tests/integration`
-  - mock OPC UA server
-  - подписка на ноду
-  - retry буфера после отказа publisher
-
-Запуск:
-
-```bash
-make test
-```
-
-или
-
-```bash
-. .venv313/bin/activate
-pytest
 ```
 
 ## Зависимости
