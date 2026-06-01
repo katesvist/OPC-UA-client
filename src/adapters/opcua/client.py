@@ -596,67 +596,28 @@ class OpcUaConnectionManager:
         children: list[Any] = []
         try:
             current_node_id = node.nodeid.to_string()
+            should_fetch_children = depth < max_depth
+            attributes_task = self._read_browse_attributes(node)
+            if should_fetch_children:
+                attributes, children = await asyncio.gather(attributes_task, node.get_children())
+            else:
+                attributes = await attributes_task
 
-            # Batch: read all needed attributes + children + data type concurrently
-            # instead of 8 sequential OPC UA round-trips per node.
-            attrs, children, data_type = await asyncio.gather(
-                node.read_attributes([
-                    ua.AttributeIds.NodeClass,
-                    ua.AttributeIds.BrowseName,
-                    ua.AttributeIds.DisplayName,
-                    ua.AttributeIds.AccessLevel,
-                    ua.AttributeIds.ValueRank,
-                    ua.AttributeIds.ArrayDimensions,
-                ]),
-                node.get_children(),
-                self._read_data_type_name(node),
-            )
-
-            def _val(dv: Any) -> Any:
-                try:
-                    return dv.Value.Value if dv and dv.Value else None
-                except Exception:
-                    return None
-
-            node_class_raw = _val(attrs[0])
-            try:
-                node_class_enum = ua.NodeClass(int(node_class_raw)) if node_class_raw is not None else None
-            except (ValueError, TypeError):
-                node_class_enum = None
-            node_class_name = node_class_enum.name if node_class_enum is not None else "Unknown"
+            node_class_name = attributes["node_class"]
 
             if self._should_include_node(node_class_name, include_variables, include_objects):
-                browse_name = _val(attrs[1])
-                display_name = _val(attrs[2])
-                raw_access = _val(attrs[3])
-                value_rank = _val(attrs[4])
-                raw_array_dims = _val(attrs[5])
-
-                access_level: list[str] = []
-                if raw_access is not None:
-                    for lvl in ua.AccessLevel:
-                        if int(raw_access) & int(lvl):
-                            access_level.append(lvl.name)
-
-                array_dimensions: list[int] | None = None
-                if raw_array_dims is not None:
-                    if isinstance(raw_array_dims, (list, tuple)):
-                        array_dimensions = [int(x) for x in raw_array_dims]
-                    else:
-                        array_dimensions = [int(raw_array_dims)]
-
                 results.append(
                     BrowseNodeResult(
                         node_id=current_node_id,
                         parent_node_id=parent_node_id,
-                        browse_name=getattr(browse_name, "to_string", lambda: str(browse_name))() if browse_name is not None else None,
-                        display_name=getattr(display_name, "Text", str(display_name)) if display_name is not None else None,
+                        browse_name=attributes["browse_name"],
+                        display_name=attributes["display_name"],
                         node_class=node_class_name,
-                        data_type=data_type if isinstance(data_type, str) else None,
-                        value_rank=int(value_rank) if value_rank is not None else None,
-                        array_dimensions=array_dimensions if array_dimensions is not None else [],
-                        access_level=access_level,
-                        has_children=bool(children),
+                        data_type=attributes["data_type"],
+                        value_rank=attributes["value_rank"],
+                        array_dimensions=attributes["array_dimensions"],
+                        access_level=attributes["access_level"],
+                        has_children=bool(children) if should_fetch_children else self._may_have_children(node_class_name),
                         depth=depth,
                     )
                 )
@@ -701,6 +662,136 @@ class OpcUaConnectionManager:
                 )
 
         await asyncio.gather(*[_browse_child(child) for child in children], return_exceptions=True)
+
+    async def _read_browse_attributes(self, node: Any) -> dict[str, Any]:
+        if hasattr(node, "read_attributes"):
+            attrs = await node.read_attributes([
+                ua.AttributeIds.NodeClass,
+                ua.AttributeIds.BrowseName,
+                ua.AttributeIds.DisplayName,
+                ua.AttributeIds.AccessLevel,
+                ua.AttributeIds.ValueRank,
+                ua.AttributeIds.ArrayDimensions,
+                ua.AttributeIds.DataType,
+            ])
+            values = [self._extract_variant_value(attr) for attr in attrs]
+            return {
+                "node_class": self._format_node_class(values[0]),
+                "browse_name": self._format_browse_name(values[1]),
+                "display_name": self._format_display_name(values[2]),
+                "access_level": self._format_access_level(values[3]),
+                "value_rank": self._format_int(values[4]),
+                "array_dimensions": self._format_array_dimensions(values[5]),
+                "data_type": self._format_data_type(values[6]),
+            }
+
+        node_class, browse_name, display_name, access_level, value_rank, array_dimensions, data_type = await asyncio.gather(
+            node.read_node_class(),
+            node.read_browse_name(),
+            node.read_display_name(),
+            self._read_access_level(node),
+            self._read_value_rank(node),
+            self._read_array_dimensions(node),
+            self._read_data_type_name(node),
+        )
+        return {
+            "node_class": getattr(node_class, "name", str(node_class)),
+            "browse_name": self._format_browse_name(browse_name),
+            "display_name": self._format_display_name(display_name),
+            "access_level": access_level,
+            "value_rank": value_rank,
+            "array_dimensions": array_dimensions,
+            "data_type": data_type,
+        }
+
+    def _format_node_class(self, value: Any) -> str:
+        if value is None:
+            return "Unknown"
+        name = getattr(value, "name", None)
+        if isinstance(name, str):
+            return name
+        try:
+            return ua.NodeClass(int(value)).name
+        except (TypeError, ValueError):
+            return str(value)
+
+    def _format_browse_name(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        return getattr(value, "to_string", lambda: str(value))()
+
+    def _format_display_name(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        return getattr(value, "Text", str(value))
+
+    def _format_access_level(self, value: Any) -> list[str]:
+        if value is None:
+            return []
+        names: list[str] = []
+        try:
+            raw_value = int(value)
+        except (TypeError, ValueError):
+            return names
+        for access_level in ua.AccessLevel:
+            if raw_value & int(access_level):
+                names.append(access_level.name)
+        return names
+
+    def _format_int(self, value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _format_array_dimensions(self, value: Any) -> list[int]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            return [int(item) for item in value]
+        try:
+            return [int(value)]
+        except (TypeError, ValueError):
+            return []
+
+    def _format_data_type(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        namespace_index = getattr(value, "NamespaceIndex", None)
+        identifier = getattr(value, "Identifier", None)
+        if namespace_index in {None, 0} and isinstance(identifier, int):
+            builtin_names = {
+                1: "Boolean",
+                2: "SByte",
+                3: "Byte",
+                4: "Int16",
+                5: "UInt16",
+                6: "Int32",
+                7: "UInt32",
+                8: "Int64",
+                9: "UInt64",
+                10: "Float",
+                11: "Double",
+                12: "String",
+                13: "DateTime",
+                14: "Guid",
+                15: "ByteString",
+                16: "XmlElement",
+                17: "NodeId",
+                18: "ExpandedNodeId",
+                19: "StatusCode",
+                20: "QualifiedName",
+                21: "LocalizedText",
+                22: "ExtensionObject",
+            }
+            if identifier in builtin_names:
+                return builtin_names[identifier]
+        return getattr(value, "to_string", lambda: str(value))()
+
+    def _may_have_children(self, node_class_name: str) -> bool:
+        return node_class_name == "Object"
 
     def _should_include_node(self, node_class_name: str, include_variables: bool, include_objects: bool) -> bool:
         if node_class_name == "Variable":

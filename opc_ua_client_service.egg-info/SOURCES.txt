@@ -26,6 +26,7 @@ src/adapters/publisher/rabbitmq.py
 src/config/__init__.py
 src/config/models.py
 src/config/settings.py
+src/config/store.py
 src/domain/__init__.py
 src/domain/entities/__init__.py
 src/domain/entities/enums.py
