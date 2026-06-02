@@ -12,19 +12,6 @@ services:
       retries: 20
       start_period: 3s
 
-  rabbitmq:
-    image: rabbitmq:4-management
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${OPC_RABBITMQ_PORT:-5673}:5672"
-      - "127.0.0.1:${OPC_RABBITMQ_MANAGEMENT_PORT:-15673}:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-
   opcua-client:
     build:
       context: .
@@ -37,6 +24,11 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${OPC_CLIENT_API_PORT:-8080}:8080"
+    networks:
+      default:
+      params-full_edge-network:
+        aliases:
+          - opcua-client
     healthcheck:
       test:
         - CMD
@@ -57,5 +49,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+
+networks:
+  params-full_edge-network:
+    external: true

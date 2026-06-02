@@ -20,7 +20,7 @@ buffer:
   retention_hours: 72
 publisher:
   mode: rabbitmq
-  url: amqp://guest:guest@rabbitmq:5672/
+  url: amqp://guest:guest@params-validator-rabbitmq:5672/
   exchange: validator.in.q
   exchange_type: direct
   routing_key: validator.in.q
