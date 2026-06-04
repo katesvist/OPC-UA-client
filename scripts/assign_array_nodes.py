@@ -188,6 +188,8 @@ def http_json(
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise ScriptError(f"{method} {url} failed with HTTP {exc.code}: {detail}") from exc
+    except TimeoutError as exc:
+        raise ScriptError(f"{method} {url} timed out after {timeout:g} seconds. Increase --timeout and try again.") from exc
     except URLError as exc:
         raise ScriptError(f"{method} {url} failed: {exc}") from exc
     except json.JSONDecodeError as exc:
@@ -242,7 +244,10 @@ def build_match_map(
     expected_indexes: set[int],
     label: str,
 ) -> dict[int, MatchItem]:
-    pattern = re.compile(rf"{re.escape(array_name)}\s*\[\s*(\d+)\s*\]")
+    # Siemens-style OPC UA node ids often expose array elements as
+    # "_DB"."ARRAY"[0], while dictionary parameters may be named
+    # "_DB"."ARRAY[0]". Accept both ARRAY[0] and ARRAY"[0].
+    pattern = re.compile(rf"{re.escape(array_name)}\s*\"?\s*\[\s*(\d+)\s*\]")
     matches: dict[int, MatchItem] = {}
     duplicates: dict[int, list[str]] = {}
 

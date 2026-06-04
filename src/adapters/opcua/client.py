@@ -294,7 +294,7 @@ class OpcUaConnectionManager:
                 await self._cleanup_connection(preserve_state=True)
                 self._reconnect_attempts += 1
                 self.metrics.inc_reconnect_attempts(self.endpoint.id)
-                await asyncio.sleep(self._backoff_seconds(self._reconnect_attempts))
+                await asyncio.sleep(self._retry_delay_seconds(self._reconnect_attempts))
 
     async def _connect_once(self) -> None:
         self._state = ConnectionState.CONNECTING if self._reconnect_attempts == 0 else ConnectionState.RECONNECTING
@@ -303,11 +303,14 @@ class OpcUaConnectionManager:
         self._client.session_timeout = self.endpoint.session_timeout_ms
         await self._apply_security(self._client)
         await self._client.connect()
+        await self._verify_connection_ready()
         self._connected_since = datetime.now(UTC)
         self._last_error = None
         self._state = ConnectionState.CONNECTED
         self.metrics.set_active_connection(self.endpoint.id, True)
+        self.logger.info("opcua_connected", url=self.endpoint.url)
         await self._setup_monitored_items()
+        self._reconnect_attempts = 0
 
     async def _monitor_connection(self) -> None:
         while not self._stop_event.is_set():
@@ -335,18 +338,7 @@ class OpcUaConnectionManager:
                 self.endpoint.subscription_defaults.publish_interval_ms,
                 handler,
             )
-            for node_cfg in subscription_nodes:
-                if node_cfg.node_id in self._disabled_node_ids:
-                    self.registry.mark_error(node_cfg, "Узел отключен: не найден в адресном пространстве OPC UA.")
-                    continue
-                try:
-                    await self._subscribe_node(node_cfg)
-                except Exception as exc:
-                    if self._is_missing_node_error(exc):
-                        self._disable_node(node_cfg, str(exc))
-                        continue
-                    self.registry.mark_error(node_cfg, str(exc))
-                    raise SubscriptionError(f"Не удалось подписаться на {node_cfg.node_id}: {exc}") from exc
+            await self._subscribe_nodes_in_batches(subscription_nodes)
 
         active_subscription_nodes = [
             node
@@ -383,6 +375,39 @@ class OpcUaConnectionManager:
         handle = await self._subscription.subscribe_data_change(node)
         self._subscription_handles[node_cfg.id] = handle
         self.registry.mark_active(node_cfg, True)
+
+    async def _subscribe_nodes_in_batches(self, nodes: list[NodeRegistryEntry]) -> None:
+        defaults = self.endpoint.subscription_defaults
+        batch_size = max(1, defaults.subscribe_batch_size)
+        pause_seconds = max(0.0, defaults.subscribe_batch_pause_seconds)
+
+        for batch_start in range(0, len(nodes), batch_size):
+            batch = nodes[batch_start : batch_start + batch_size]
+            for node_cfg in batch:
+                if node_cfg.node_id in self._disabled_node_ids:
+                    self.registry.mark_error(node_cfg, "Узел отключен: не найден в адресном пространстве OPC UA.")
+                    continue
+                try:
+                    await self._subscribe_node(node_cfg)
+                except Exception as exc:
+                    if self._is_missing_node_error(exc):
+                        self._disable_node(node_cfg, str(exc))
+                        continue
+                    if self._is_connection_lost_error(exc):
+                        self.registry.mark_error(node_cfg, str(exc))
+                        raise SubscriptionError(f"Потеряна OPC UA сессия при подписке на {node_cfg.node_id}: {exc}") from exc
+                    self.registry.mark_error(node_cfg, str(exc))
+                    self.logger.warning("opcua_node_subscribe_failed", node_id=node_cfg.node_id, error=str(exc))
+
+            subscribed_count = min(batch_start + len(batch), len(nodes))
+            self.logger.info(
+                "opcua_subscription_batch_completed",
+                subscribed_count=subscribed_count,
+                total_count=len(nodes),
+                batch_size=len(batch),
+            )
+            if subscribed_count < len(nodes) and pause_seconds > 0:
+                await asyncio.sleep(pause_seconds)
 
     async def _start_polling_node(self, node_cfg: NodeRegistryEntry) -> None:
         if node_cfg.id in self._polling_tasks and not self._polling_tasks[node_cfg.id].done():
@@ -467,6 +492,8 @@ class OpcUaConnectionManager:
             if self._is_missing_node_error(exc):
                 self._disable_node(node_cfg, str(exc))
                 return
+            if self._is_connection_lost_error(exc):
+                raise
             self.logger.info("opcua_metadata_read_failed", node_id=node_cfg.node_id, error=str(exc))
 
     async def _cleanup_connection(self, preserve_state: bool = False) -> None:
@@ -520,6 +547,23 @@ class OpcUaConnectionManager:
                 result = client.set_security_string(f"{self.endpoint.security_policy},{self.endpoint.security_mode}")
             if inspect.isawaitable(result):
                 await result
+
+    async def _verify_connection_ready(self) -> None:
+        if self._client is None:
+            raise ConnectionError("Клиент OPC UA отсутствует после подключения.")
+        await self._client.check_connection()
+
+    def _retry_delay_seconds(self, attempt: int) -> float:
+        policy = self.endpoint.reconnect_policy
+        if policy.failure_threshold > 0 and attempt >= policy.failure_threshold:
+            cooldown = max(0.0, policy.cooldown_after_failures_seconds)
+            self.logger.warning(
+                "opcua_reconnect_cooldown_started",
+                attempts=attempt,
+                cooldown_seconds=cooldown,
+            )
+            return cooldown
+        return self._backoff_seconds(attempt)
 
     def _backoff_seconds(self, attempt: int) -> float:
         policy = self.endpoint.reconnect_policy
@@ -929,3 +973,22 @@ class OpcUaConnectionManager:
             return True
         message = str(exc)
         return "BadNodeIdUnknown" in message or "does not exist in the server address space" in message
+
+    def _is_connection_lost_error(self, exc: Exception) -> bool:
+        if isinstance(exc, (TimeoutError, OSError, ConnectionError)):
+            return True
+        message = str(exc).lower()
+        connection_markers = (
+            "failed to send request to opc ua server",
+            "badsessionidinvalid",
+            "badsessionnotactivated",
+            "session id is not valid",
+            "session cannot be used",
+            "connection is closed",
+            "connection lost",
+            "connection reset",
+            "timeout",
+            "timed out",
+            "socket",
+        )
+        return any(marker in message for marker in connection_markers)

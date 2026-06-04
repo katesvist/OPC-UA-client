@@ -43,12 +43,15 @@ endpoints:
     initial_delay_seconds: 2.0
     max_delay_seconds: 30.0
     backoff_multiplier: 2.0
-    failure_threshold: 5
+    failure_threshold: 10
+    cooldown_after_failures_seconds: 14400.0
   subscription_defaults:
     publish_interval_ms: 1000
     keepalive_count: 10
     lifetime_count: 30
     queue_size: 100
+    subscribe_batch_size: 100
+    subscribe_batch_pause_seconds: 0.25
   metadata:
     source_id: rig-site-01
     source_system_id: scada-main
@@ -73,12 +76,15 @@ endpoints:
     initial_delay_seconds: 2.0
     max_delay_seconds: 30.0
     backoff_multiplier: 2.0
-    failure_threshold: 5
+    failure_threshold: 10
+    cooldown_after_failures_seconds: 14400.0
   subscription_defaults:
     publish_interval_ms: 1000
     keepalive_count: 10
     lifetime_count: 30
     queue_size: 100
+    subscribe_batch_size: 100
+    subscribe_batch_pause_seconds: 0.25
   metadata:
     source_id: rig-site-01
     source_system_id: scada-main

@@ -23,7 +23,8 @@ class RetryPolicyConfig(BaseModel):
     initial_delay_seconds: float = 2.0
     max_delay_seconds: float = 30.0
     backoff_multiplier: float = 2.0
-    failure_threshold: int = 5
+    failure_threshold: int = 10
+    cooldown_after_failures_seconds: float = 14400.0
 
 
 class AuthConfig(BaseModel):
@@ -39,6 +40,8 @@ class SubscriptionDefaults(BaseModel):
     keepalive_count: int = 10
     lifetime_count: int = 30
     queue_size: int = 100
+    subscribe_batch_size: int = 100
+    subscribe_batch_pause_seconds: float = 0.25
 
 
 class EndpointMetadata(BaseModel):

@@ -29,8 +29,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
 
   mock-opcua-server:
     build:
@@ -67,6 +65,8 @@ services:
 
   rabbitmq:
     image: rabbitmq:4-management
+    profiles:
+      - local-rabbit
     restart: unless-stopped
     ports:
       - "127.0.0.1:5672:5672"
