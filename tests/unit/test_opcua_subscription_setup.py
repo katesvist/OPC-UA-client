@@ -7,6 +7,7 @@ import pytest
 from src.adapters.metrics.registry import MetricsRegistry
 from src.adapters.opcua.client import OpcUaConnectionManager
 from src.config.models import EndpointConfig, NodeRegistryEntry, SubscriptionDefaults
+from src.domain.entities.enums import ConnectionState
 from src.domain.entities.errors import SubscriptionError
 from src.modules.subscriptions.registry import NodeRegistry
 
@@ -119,3 +120,57 @@ async def test_subscribe_nodes_in_batches_aborts_on_connection_level_error(
         await manager._subscribe_nodes_in_batches(nodes)
 
     assert manager._subscribe_node.await_count == 2
+
+
+def test_subscription_parameters_include_keepalive_lifetime_and_queue(
+    endpoint_config: EndpointConfig,
+    node_config: NodeRegistryEntry,
+) -> None:
+    endpoint = endpoint_config.model_copy(
+        update={
+            "subscription_defaults": SubscriptionDefaults(
+                publish_interval_ms=1000,
+                keepalive_count=30,
+                lifetime_count=180,
+                queue_size=250,
+            )
+        }
+    )
+    manager = _manager(endpoint, [node_config])
+
+    params = manager._subscription_parameters()
+
+    assert params.RequestedPublishingInterval == 1000.0
+    assert params.RequestedMaxKeepAliveCount == 30
+    assert params.RequestedLifetimeCount == 180
+    assert params.MaxNotificationsPerPublish == 250
+
+
+@pytest.mark.asyncio
+async def test_polling_node_error_does_not_degrade_endpoint(
+    endpoint_config: EndpointConfig,
+    node_config: NodeRegistryEntry,
+) -> None:
+    node = node_config.model_copy(update={"acquisition_mode": "polling"})
+    manager = _manager(endpoint_config, [node])
+    manager._state = ConnectionState.CONNECTED
+
+    client = MagicMock()
+    opc_node = MagicMock()
+    opc_node.read_data_value = AsyncMock(side_effect=RuntimeError("BadUserAccessDenied"))
+    client.get_node.return_value = opc_node
+    manager._client = client
+
+    sleep_count = 0
+
+    async def sleep_once(_: float) -> None:
+        nonlocal sleep_count
+        sleep_count += 1
+        manager._stop_event.set()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("src.adapters.opcua.client.asyncio.sleep", sleep_once)
+        await manager._poll_node(node)
+
+    assert manager._state == ConnectionState.CONNECTED
+    assert sleep_count == 1

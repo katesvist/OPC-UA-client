@@ -41,8 +41,12 @@ endpoints:
     mode: username_password
     username: user3
     password: '12345678'
-  session_timeout_ms: 60000
-  request_timeout_seconds: 5.0
+  session_timeout_ms: 300000
+  request_timeout_seconds: 60.0
+  discovery:
+    enabled: true
+    required: false
+    endpoint_selection_policy: configured
   reconnect_policy:
     initial_delay_seconds: 2.0
     max_delay_seconds: 30.0
@@ -51,11 +55,17 @@ endpoints:
     cooldown_after_failures_seconds: 14400.0
   subscription_defaults:
     publish_interval_ms: 1000
-    keepalive_count: 10
-    lifetime_count: 30
+    keepalive_count: 30
+    lifetime_count: 180
     queue_size: 100
     subscribe_batch_size: 100
     subscribe_batch_pause_seconds: 0.25
+    notification_queue_size: 10000
+    notification_workers: 4
+    coalesce_notifications: true
+    suppress_unchanged_values: true
+    polling_error_backoff_seconds: 60.0
+    polling_error_backoff_max_seconds: 900.0
   metadata:
     source_id: remote-opc-lab
     source_system_id: opc-server-192-168-0-120

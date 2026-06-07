@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from src.config.models import EndpointConfig, NodeRegistryEntry
+from src.config.models import EndpointConfig, NodeRegistryEntry, _mask_endpoint
 from src.domain.entities.errors import (
     BrowseError,
     ConnectionError,
@@ -17,9 +17,9 @@ from src.domain.entities.errors import (
     NodeWriteError,
     WriteNotAllowedError,
 )
-from src.config.models import _mask_endpoint
 from src.domain.entities.models import (
     BrowseRequest,
+    MethodCallRequest,
     ReadRequest,
     WriteRequest,
 )
@@ -131,6 +131,39 @@ def build_router() -> APIRouter:
     ) -> list[dict[str, object]]:
         return [item.model_dump(mode="json") for item in await runtime.buffer.dead_letters()]
 
+    @router.get("/events")
+    async def events(
+        endpoint_id: str | None = None,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> list[dict[str, object]]:
+        try:
+            return runtime.connections.event_notifications(endpoint_id)
+        except EndpointNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @router.get("/alarms")
+    async def alarms(
+        endpoint_id: str | None = None,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> list[dict[str, object]]:
+        try:
+            return runtime.connections.alarm_notifications(endpoint_id)
+        except EndpointNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @router.get("/capabilities")
+    async def capabilities(
+        endpoint_id: str | None = None,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> list[dict[str, object]]:
+        try:
+            return runtime.connections.capabilities(endpoint_id)
+        except EndpointNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
     @router.post("/connections/{endpoint_id}/reconnect", status_code=status.HTTP_202_ACCEPTED)
     async def reconnect(
         endpoint_id: str,
@@ -195,6 +228,27 @@ def build_router() -> APIRouter:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except WriteNotAllowedError as exc:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        except NodeWriteError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    @router.post("/methods/call")
+    async def call_method(
+        payload: MethodCallRequest,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> dict[str, object]:
+        try:
+            result = await runtime.connections.call_method(
+                payload.endpoint_id,
+                payload.object_node_id,
+                payload.method_node_id,
+                payload.input_arguments,
+            )
+            return result.model_dump(mode="json")
+        except EndpointNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ConnectionError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NodeWriteError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

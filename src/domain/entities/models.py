@@ -166,6 +166,20 @@ class WriteRequest(BaseModel):
     value: Any
 
 
+class MethodCallRequest(BaseModel):
+    endpoint_id: str
+    object_node_id: str
+    method_node_id: str
+    input_arguments: list[Any] = Field(default_factory=list)
+
+
+class MethodCallResult(BaseModel):
+    endpoint_id: str
+    object_node_id: str
+    method_node_id: str
+    output_arguments: list[Any] = Field(default_factory=list)
+
+
 class WriteResult(BaseModel):
     endpoint_id: str
     node_id: str

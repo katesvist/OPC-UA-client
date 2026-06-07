@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, Field, SecretStr
 
 
-def _mask_endpoint(endpoint: "EndpointConfig") -> dict[str, Any]:
+def _mask_endpoint(endpoint: EndpointConfig) -> dict[str, Any]:
     data = endpoint.model_dump(mode="json")
     if data.get("auth", {}).get("password"):
         data["auth"]["password"] = "***"
@@ -35,6 +35,13 @@ class AuthConfig(BaseModel):
     private_key_path: Path | None = None
 
 
+class DiscoveryConfig(BaseModel):
+    enabled: bool = True
+    required: bool = False
+    endpoint_selection_policy: Literal["configured", "best_available"] = "configured"
+    discovery_url: str | None = None
+
+
 class SubscriptionDefaults(BaseModel):
     publish_interval_ms: int = 1000
     keepalive_count: int = 10
@@ -42,6 +49,28 @@ class SubscriptionDefaults(BaseModel):
     queue_size: int = 100
     subscribe_batch_size: int = 100
     subscribe_batch_pause_seconds: float = 0.25
+    notification_queue_size: int = 10000
+    notification_workers: int = 4
+    coalesce_notifications: bool = True
+    suppress_unchanged_values: bool = True
+    polling_error_backoff_seconds: float = 60.0
+    polling_error_backoff_max_seconds: float = 900.0
+
+
+class EventSubscriptionConfig(BaseModel):
+    enabled: bool = False
+    source_node_id: str = "i=2253"
+    event_type_id: str = "i=2041"
+    queue_size: int = 100
+    max_cached_events: int = 200
+
+
+class AlarmsConditionsConfig(BaseModel):
+    enabled: bool = False
+    source_node_id: str = "i=2253"
+    event_type_id: str = "i=2782"
+    queue_size: int = 100
+    max_cached_events: int = 200
 
 
 class EndpointMetadata(BaseModel):
@@ -64,8 +93,11 @@ class EndpointConfig(BaseModel):
     auth: AuthConfig = Field(default_factory=AuthConfig)
     session_timeout_ms: int = 60000
     request_timeout_seconds: float = 10.0
+    discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     reconnect_policy: RetryPolicyConfig = Field(default_factory=RetryPolicyConfig)
     subscription_defaults: SubscriptionDefaults = Field(default_factory=SubscriptionDefaults)
+    events: EventSubscriptionConfig = Field(default_factory=EventSubscriptionConfig)
+    alarms_conditions: AlarmsConditionsConfig = Field(default_factory=AlarmsConditionsConfig)
     metadata: EndpointMetadata
 
 
@@ -83,6 +115,7 @@ class ValueTransformConfig(BaseModel):
 class InputControlConfig(BaseModel):
     stale_after_seconds: int = 30
     suppress_duplicates: bool = False
+    suppress_timestamp_only_changes: bool = False
     deadband: float | None = None
     thresholds: ThresholdRule | None = None
 

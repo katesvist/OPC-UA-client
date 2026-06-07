@@ -54,9 +54,13 @@ class ValidationEngine:
         elif quality.category in {QualityCategory.UNCERTAIN, QualityCategory.UNKNOWN} and state == ValidationState.VALID:
             state = ValidationState.VALID_WITH_WARNING
 
-        if node.input_control.suppress_duplicates and previous_timestamp == source_timestamp and previous_value == value:
-            is_duplicate = True
-            warnings.append("Дубликат подавлен.")
+        if node.input_control.suppress_duplicates and previous_value == value:
+            if previous_timestamp == source_timestamp:
+                is_duplicate = True
+                warnings.append("Дубликат подавлен.")
+            elif node.input_control.suppress_timestamp_only_changes:
+                is_duplicate = True
+                warnings.append("Изменение только timestamp подавлено.")
 
         deadband = node.input_control.deadband
         if (

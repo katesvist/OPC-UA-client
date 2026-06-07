@@ -4,7 +4,14 @@ from src.adapters.metrics.registry import MetricsRegistry
 from src.adapters.opcua.client import OpcUaConnectionManager
 from src.config.models import EndpointConfig, NodeRegistryEntry, _mask_endpoint
 from src.domain.entities.errors import EndpointNotFoundError
-from src.domain.entities.models import BrowseNodeResult, EndpointStatus, NodeConfigApplyResult, ReadResult, WriteResult
+from src.domain.entities.models import (
+    BrowseNodeResult,
+    EndpointStatus,
+    MethodCallResult,
+    NodeConfigApplyResult,
+    ReadResult,
+    WriteResult,
+)
 from src.domain.services.pipeline import EventPipeline
 from src.modules.subscriptions.registry import NodeRegistry
 
@@ -65,6 +72,39 @@ class ConnectionsCoordinator:
     async def write(self, endpoint_id: str, node_id: str, value: object) -> WriteResult:
         manager = self._get_manager(endpoint_id)
         return await manager.write_node(node_id, value)
+
+    async def call_method(
+        self,
+        endpoint_id: str,
+        object_node_id: str,
+        method_node_id: str,
+        input_arguments: list[object],
+    ) -> MethodCallResult:
+        manager = self._get_manager(endpoint_id)
+        return await manager.call_method(object_node_id, method_node_id, input_arguments)
+
+    def event_notifications(self, endpoint_id: str | None = None) -> list[dict[str, object]]:
+        managers = [self._get_manager(endpoint_id)] if endpoint_id else list(self._managers.values())
+        return [
+            {"endpoint_id": manager.endpoint.id, **event}
+            for manager in managers
+            for event in manager.event_notifications()
+        ]
+
+    def alarm_notifications(self, endpoint_id: str | None = None) -> list[dict[str, object]]:
+        managers = [self._get_manager(endpoint_id)] if endpoint_id else list(self._managers.values())
+        return [
+            {"endpoint_id": manager.endpoint.id, **event}
+            for manager in managers
+            for event in manager.alarm_notifications()
+        ]
+
+    def capabilities(self, endpoint_id: str | None = None) -> list[dict[str, object]]:
+        managers = [self._get_manager(endpoint_id)] if endpoint_id else list(self._managers.values())
+        return [
+            {"endpoint_id": manager.endpoint.id, **manager.capabilities()}
+            for manager in managers
+        ]
 
     async def replace_nodes(self, nodes: list[NodeRegistryEntry]) -> list[NodeConfigApplyResult]:
         old_by_id = {node.id: node for node in self.registry.all()}

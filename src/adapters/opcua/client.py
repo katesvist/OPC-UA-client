@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections import deque
 from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
@@ -21,7 +22,14 @@ from src.domain.entities.errors import (
     SubscriptionError,
     WriteNotAllowedError,
 )
-from src.domain.entities.models import BrowseNodeResult, EndpointStatus, Observation, ReadResult, WriteResult
+from src.domain.entities.models import (
+    BrowseNodeResult,
+    EndpointStatus,
+    MethodCallResult,
+    Observation,
+    ReadResult,
+    WriteResult,
+)
 from src.domain.services.pipeline import EventPipeline
 from src.modules.subscriptions.registry import NodeRegistry
 
@@ -31,7 +39,10 @@ class _SubscriptionHandler:
         self.manager = manager
 
     def datachange_notification(self, node: Any, val: Any, data: Any) -> None:
-        self.manager.track_background_task(self.manager.handle_datachange(node, val, data))
+        self.manager.enqueue_datachange(node, val, data)
+
+    def event_notification(self, event: Any) -> None:
+        self.manager.record_event_notification(event)
 
     def status_change_notification(self, status: Any) -> None:
         self.manager.logger.warning("opcua_subscription_status_changed", status=str(status))
@@ -65,9 +76,31 @@ class OpcUaConnectionManager:
         self._node_metadata: dict[str, dict[str, Any]] = {}
         self._disabled_node_ids: set[str] = set()
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._notification_queue: asyncio.Queue[str] = asyncio.Queue(
+            maxsize=max(1, endpoint.subscription_defaults.notification_queue_size)
+        )
+        self._notification_workers: set[asyncio.Task[None]] = set()
+        self._pending_notifications: dict[str, tuple[Any, Any, Any]] = {}
+        self._queued_notification_node_ids: set[str] = set()
+        self._last_notification_signatures: dict[str, tuple[Any, int | None]] = {}
+        self._polling_failure_counts: dict[str, int] = {}
+        self._event_subscription_handles: list[Any] = []
+        self._opcua_events: deque[dict[str, Any]] = deque(maxlen=max(1, endpoint.events.max_cached_events))
+        self._opcua_alarms: deque[dict[str, Any]] = deque(maxlen=max(1, endpoint.alarms_conditions.max_cached_events))
+        self._server_capabilities: dict[str, Any] = {
+            "discovery_enabled": endpoint.discovery.enabled,
+            "events_enabled": endpoint.events.enabled,
+            "alarms_conditions_enabled": endpoint.alarms_conditions.enabled,
+            "methods_api_enabled": True,
+            "redundancy": "not_configured",
+            "gds": "not_configured",
+            "backpressure": self._backpressure_capabilities(),
+            "endpoints": [],
+        }
         self._config_lock = asyncio.Lock()
 
     async def start(self) -> None:
+        self._start_notification_workers()
         self._supervisor_task = asyncio.create_task(self._run(), name=f"opcua-connection-{self.endpoint.id}")
 
     async def stop(self) -> None:
@@ -77,6 +110,12 @@ class OpcUaConnectionManager:
             with suppress(asyncio.CancelledError):
                 await self._supervisor_task
         await self._cleanup_connection()
+        for task in self._notification_workers:
+            task.cancel()
+        for task in self._notification_workers:
+            with suppress(asyncio.CancelledError):
+                await task
+        self._notification_workers.clear()
 
     async def reconnect(self) -> None:
         self._reconnect_event.set()
@@ -224,6 +263,29 @@ class OpcUaConnectionManager:
         except Exception as exc:
             raise NodeWriteError(f"Не удалось записать значение в узел {node_id}: {exc}") from exc
 
+    async def call_method(self, object_node_id: str, method_node_id: str, input_arguments: list[Any]) -> MethodCallResult:
+        client = self._require_client()
+        object_node = client.get_node(object_node_id)
+        try:
+            raw_result = await object_node.call_method(method_node_id, *input_arguments)
+        except ua.UaStatusCodeError as exc:
+            raise NodeWriteError(f"Сервер OPC UA отклонил вызов метода {method_node_id}: {exc}") from exc
+        except Exception as exc:
+            raise NodeWriteError(f"Не удалось вызвать метод {method_node_id}: {exc}") from exc
+
+        if isinstance(raw_result, list):
+            output_arguments = raw_result
+        elif raw_result is None:
+            output_arguments = []
+        else:
+            output_arguments = [raw_result]
+        return MethodCallResult(
+            endpoint_id=self.endpoint.id,
+            object_node_id=object_node_id,
+            method_node_id=method_node_id,
+            output_arguments=[self._json_safe(value) for value in output_arguments],
+        )
+
     async def handle_datachange(self, node: Any, value: Any, data: Any) -> None:
         try:
             node_id = node.nodeid.to_string()
@@ -269,6 +331,11 @@ class OpcUaConnectionManager:
                 },
                 tags=node_config.tags,
             )
+            if self._should_suppress_unchanged(node_id, value, self._extract_status_raw(data_value)):
+                now = datetime.now(UTC)
+                self._last_data_at = now
+                self.registry.touch(self.endpoint.id, node_id, now)
+                return
             await self.pipeline.process(observation, self.endpoint, node_config)
             self._last_data_at = datetime.now(UTC)
             self.registry.touch(self.endpoint.id, node_id, self._last_data_at)
@@ -299,7 +366,8 @@ class OpcUaConnectionManager:
     async def _connect_once(self) -> None:
         self._state = ConnectionState.CONNECTING if self._reconnect_attempts == 0 else ConnectionState.RECONNECTING
         self.logger.info("opcua_connecting", url=self.endpoint.url, state=self._state.value)
-        self._client = Client(url=self.endpoint.url, timeout=self.endpoint.request_timeout_seconds)
+        selected_url = await self._select_endpoint_url()
+        self._client = Client(url=selected_url, timeout=self.endpoint.request_timeout_seconds)
         self._client.session_timeout = self.endpoint.session_timeout_ms
         await self._apply_security(self._client)
         await self._client.connect()
@@ -308,7 +376,7 @@ class OpcUaConnectionManager:
         self._last_error = None
         self._state = ConnectionState.CONNECTED
         self.metrics.set_active_connection(self.endpoint.id, True)
-        self.logger.info("opcua_connected", url=self.endpoint.url)
+        self.logger.info("opcua_connected", url=selected_url)
         await self._setup_monitored_items()
         self._reconnect_attempts = 0
 
@@ -332,13 +400,13 @@ class OpcUaConnectionManager:
         for node in nodes:
             await self._load_node_metadata(node)
 
+        if subscription_nodes or self.endpoint.events.enabled or self.endpoint.alarms_conditions.enabled:
+            await self._ensure_subscription()
+
         if subscription_nodes:
-            handler = _SubscriptionHandler(self)
-            self._subscription = await self._client.create_subscription(
-                self.endpoint.subscription_defaults.publish_interval_ms,
-                handler,
-            )
             await self._subscribe_nodes_in_batches(subscription_nodes)
+
+        await self._setup_event_subscriptions()
 
         active_subscription_nodes = [
             node
@@ -359,10 +427,7 @@ class OpcUaConnectionManager:
         if self._subscription is not None:
             return
         handler = _SubscriptionHandler(self)
-        self._subscription = await self._client.create_subscription(
-            self.endpoint.subscription_defaults.publish_interval_ms,
-            handler,
-        )
+        self._subscription = await self._client.create_subscription(self._subscription_parameters(), handler)
 
     async def _subscribe_node(self, node_cfg: NodeRegistryEntry) -> None:
         if self._client is None:
@@ -372,7 +437,11 @@ class OpcUaConnectionManager:
             self.registry.mark_active(node_cfg, True)
             return
         node = self._client.get_node(node_cfg.node_id)
-        handle = await self._subscription.subscribe_data_change(node)
+        handle = await self._subscription.subscribe_data_change(
+            node,
+            queuesize=max(1, self.endpoint.subscription_defaults.queue_size),
+            sampling_interval=float(node_cfg.sampling_interval_ms or self.endpoint.subscription_defaults.publish_interval_ms),
+        )
         self._subscription_handles[node_cfg.id] = handle
         self.registry.mark_active(node_cfg, True)
 
@@ -463,6 +532,7 @@ class OpcUaConnectionManager:
                 await self.pipeline.process(observation, self.endpoint, node_cfg)
                 self._last_data_at = datetime.now(UTC)
                 self._state = ConnectionState.CONNECTED
+                self._polling_failure_counts.pop(node_cfg.id, None)
                 self.registry.touch(self.endpoint.id, node_cfg.node_id, self._last_data_at)
             except Exception as exc:
                 if self._is_missing_node_error(exc):
@@ -470,7 +540,11 @@ class OpcUaConnectionManager:
                     return
                 self.logger.warning("opcua_polling_failed", node_id=node_cfg.node_id, error=str(exc))
                 self.registry.mark_error(node_cfg, str(exc))
-                self._state = ConnectionState.DEGRADED
+                self._polling_failure_counts[node_cfg.id] = self._polling_failure_counts.get(node_cfg.id, 0) + 1
+                if self._is_connection_lost_error(exc):
+                    raise
+                await asyncio.sleep(self._polling_error_backoff_seconds(node_cfg))
+                continue
             await asyncio.sleep(max(0.2, node_cfg.polling_interval_seconds))
 
     async def _load_node_metadata(self, node_cfg: NodeRegistryEntry) -> None:
@@ -503,6 +577,15 @@ class OpcUaConnectionManager:
         for task in list(self._background_tasks):
             task.cancel()
         self._background_tasks.clear()
+        self._pending_notifications.clear()
+        self._queued_notification_node_ids.clear()
+        self._last_notification_signatures.clear()
+        self._polling_failure_counts.clear()
+        while not self._notification_queue.empty():
+            with suppress(asyncio.QueueEmpty):
+                self._notification_queue.get_nowait()
+                self._notification_queue.task_done()
+        self._event_subscription_handles.clear()
         if self._subscription is not None:
             with suppress(Exception):
                 await self._subscription.delete()
@@ -520,6 +603,304 @@ class OpcUaConnectionManager:
         if not preserve_state and self._state != ConnectionState.FAILED:
             self._state = ConnectionState.DISCONNECTED
         self.metrics.set_active_connection(self.endpoint.id, False)
+
+    def _subscription_parameters(self) -> ua.CreateSubscriptionParameters:
+        defaults = self.endpoint.subscription_defaults
+        params = ua.CreateSubscriptionParameters()
+        params.RequestedPublishingInterval = float(defaults.publish_interval_ms)
+        params.RequestedMaxKeepAliveCount = max(1, int(defaults.keepalive_count))
+        params.RequestedLifetimeCount = max(
+            int(defaults.lifetime_count),
+            int(defaults.keepalive_count) * 3,
+        )
+        params.MaxNotificationsPerPublish = max(0, int(defaults.queue_size))
+        params.PublishingEnabled = True
+        params.Priority = 0
+        return params
+
+    async def _select_endpoint_url(self) -> str:
+        discovery = self.endpoint.discovery
+        if not discovery.enabled:
+            return self.endpoint.url
+
+        discovery_url = discovery.discovery_url or self.endpoint.url
+        discovery_client = Client(url=discovery_url, timeout=self.endpoint.request_timeout_seconds)
+        try:
+            endpoints = await discovery_client.connect_and_get_server_endpoints()
+        except Exception as exc:
+            self.logger.warning("opcua_discovery_failed", url=discovery_url, error=str(exc))
+            if discovery.required:
+                raise
+            return self.endpoint.url
+
+        self.logger.info(
+            "opcua_discovery_completed",
+            endpoint_count=len(endpoints),
+            configured_url=self.endpoint.url,
+        )
+        self._server_capabilities["endpoints"] = [
+            self._endpoint_description_to_dict(endpoint)
+            for endpoint in endpoints
+        ]
+        selected = self._select_discovered_endpoint(endpoints)
+        if selected is None:
+            message = "OPC UA server did not advertise an endpoint matching configured security."
+            self.logger.warning("opcua_endpoint_selection_failed", error=message)
+            if discovery.required:
+                raise ConnectionError(message)
+            return self.endpoint.url
+
+        selected_url = str(getattr(selected, "EndpointUrl", self.endpoint.url) or self.endpoint.url)
+        self.logger.info(
+            "opcua_endpoint_selected",
+            url=selected_url,
+            security_mode=getattr(getattr(selected, "SecurityMode", None), "name", None),
+            security_policy=getattr(selected, "SecurityPolicyUri", None),
+            policy=discovery.endpoint_selection_policy,
+        )
+        return selected_url if discovery.endpoint_selection_policy == "best_available" else self.endpoint.url
+
+    def _endpoint_description_to_dict(self, endpoint: Any) -> dict[str, Any]:
+        user_tokens = []
+        for token in getattr(endpoint, "UserIdentityTokens", []) or []:
+            token_type = getattr(token, "TokenType", None)
+            user_tokens.append(
+                {
+                    "policy_id": getattr(token, "PolicyId", None),
+                    "token_type": getattr(token_type, "name", str(token_type)),
+                    "security_policy_uri": getattr(token, "SecurityPolicyUri", None),
+                }
+            )
+        security_mode = getattr(endpoint, "SecurityMode", None)
+        return {
+            "url": getattr(endpoint, "EndpointUrl", None),
+            "security_mode": getattr(security_mode, "name", str(security_mode)),
+            "security_policy_uri": getattr(endpoint, "SecurityPolicyUri", None),
+            "transport_profile_uri": getattr(endpoint, "TransportProfileUri", None),
+            "security_level": getattr(endpoint, "SecurityLevel", None),
+            "user_identity_tokens": user_tokens,
+        }
+
+    def _select_discovered_endpoint(self, endpoints: list[Any]) -> Any | None:
+        if self.endpoint.discovery.endpoint_selection_policy == "best_available":
+            return self._best_available_endpoint(endpoints)
+        desired_mode = self._message_security_mode(self.endpoint.security_mode)
+        desired_policy = self._security_policy_uri(self.endpoint.security_policy)
+        for endpoint in endpoints:
+            if getattr(endpoint, "SecurityMode", None) == desired_mode and getattr(endpoint, "SecurityPolicyUri", None) == desired_policy:
+                return endpoint
+        return None
+
+    def _best_available_endpoint(self, endpoints: list[Any]) -> Any | None:
+        if not endpoints:
+            return None
+        scored = sorted(
+            endpoints,
+            key=lambda endpoint: (
+                self._security_score(getattr(endpoint, "SecurityPolicyUri", "")),
+                self._security_mode_score(getattr(endpoint, "SecurityMode", None)),
+            ),
+            reverse=True,
+        )
+        return scored[0]
+
+    def _security_score(self, policy_uri: str) -> int:
+        policy = policy_uri.rsplit("#", 1)[-1].lower()
+        scores = {
+            "aes256_sha256_rsassa_pss": 50,
+            "aes128_sha256_rsaoaep": 40,
+            "basic256sha256": 30,
+            "basic256": 20,
+            "basic128rsa15": 10,
+            "none": 0,
+        }
+        return scores.get(policy, 0)
+
+    def _security_mode_score(self, mode: Any) -> int:
+        name = getattr(mode, "name", str(mode)).lower()
+        if "signandencrypt" in name:
+            return 2
+        if "sign" in name:
+            return 1
+        return 0
+
+    def _message_security_mode(self, security_mode: str) -> ua.MessageSecurityMode:
+        normalized = security_mode.replace("_", "").replace(" ", "").lower()
+        if normalized in {"none", "none_"}:
+            return ua.MessageSecurityMode.None_
+        if normalized == "sign":
+            return ua.MessageSecurityMode.Sign
+        if normalized == "signandencrypt":
+            return ua.MessageSecurityMode.SignAndEncrypt
+        return ua.MessageSecurityMode.None_
+
+    def _security_policy_uri(self, security_policy: str) -> str:
+        normalized = security_policy.rsplit("#", 1)[-1]
+        if normalized.lower() in {"none", "nosecurity"}:
+            return "http://opcfoundation.org/UA/SecurityPolicy#None"
+        return f"http://opcfoundation.org/UA/SecurityPolicy#{normalized}"
+
+    async def _setup_event_subscriptions(self) -> None:
+        if self._subscription is None:
+            return
+        if self.endpoint.events.enabled:
+            try:
+                handle = await self._subscription.subscribe_events(
+                    sourcenode=self.endpoint.events.source_node_id,
+                    evtypes=self.endpoint.events.event_type_id,
+                    queuesize=max(1, self.endpoint.events.queue_size),
+                )
+                self._event_subscription_handles.append(handle)
+                self.logger.info("opcua_events_subscription_started", source_node_id=self.endpoint.events.source_node_id)
+            except Exception as exc:
+                self.logger.warning("opcua_events_subscription_failed", error=str(exc))
+        if self.endpoint.alarms_conditions.enabled:
+            try:
+                handle = await self._subscription.subscribe_alarms_and_conditions(
+                    sourcenode=self.endpoint.alarms_conditions.source_node_id,
+                    evtypes=self.endpoint.alarms_conditions.event_type_id,
+                    queuesize=max(1, self.endpoint.alarms_conditions.queue_size),
+                )
+                self._event_subscription_handles.append(handle)
+                self.logger.info("opcua_alarms_conditions_subscription_started", source_node_id=self.endpoint.alarms_conditions.source_node_id)
+            except Exception as exc:
+                self.logger.warning("opcua_alarms_conditions_subscription_failed", error=str(exc))
+
+    def enqueue_datachange(self, node: Any, value: Any, data: Any) -> None:
+        try:
+            node_id = node.nodeid.to_string()
+        except Exception:
+            self.track_background_task(self.handle_datachange(node, value, data))
+            return
+
+        defaults = self.endpoint.subscription_defaults
+        if not defaults.coalesce_notifications:
+            try:
+                self._notification_queue.put_nowait(node_id)
+                self._pending_notifications[node_id] = (node, value, data)
+                self._queued_notification_node_ids.add(node_id)
+            except asyncio.QueueFull:
+                self.logger.warning("opcua_datachange_queue_full", node_id=node_id)
+            return
+
+        self._pending_notifications[node_id] = (node, value, data)
+        if node_id in self._queued_notification_node_ids:
+            return
+        try:
+            self._notification_queue.put_nowait(node_id)
+            self._queued_notification_node_ids.add(node_id)
+        except asyncio.QueueFull:
+            self.logger.warning("opcua_datachange_queue_full", node_id=node_id)
+
+    def _start_notification_workers(self) -> None:
+        if self._notification_workers:
+            return
+        worker_count = max(1, self.endpoint.subscription_defaults.notification_workers)
+        for index in range(worker_count):
+            task = asyncio.create_task(
+                self._notification_worker(),
+                name=f"opcua-notification-worker-{self.endpoint.id}-{index}",
+            )
+            self._notification_workers.add(task)
+            task.add_done_callback(self._notification_workers.discard)
+
+    async def _notification_worker(self) -> None:
+        while not self._stop_event.is_set():
+            node_id = await self._notification_queue.get()
+            try:
+                item = self._pending_notifications.pop(node_id, None)
+                self._queued_notification_node_ids.discard(node_id)
+                if item is None:
+                    continue
+                node, value, data = item
+                await self.handle_datachange(node, value, data)
+            finally:
+                self._notification_queue.task_done()
+
+    def record_event_notification(self, event: Any) -> None:
+        payload = self._event_to_dict(event)
+        event_type = str(payload.get("event_type") or payload.get("EventType") or "")
+        if self._looks_like_alarm_or_condition(payload, event_type):
+            self._opcua_alarms.append(payload)
+        else:
+            self._opcua_events.append(payload)
+        self.logger.info("opcua_event_received", event_type=event_type or None)
+
+    def event_notifications(self) -> list[dict[str, Any]]:
+        return list(self._opcua_events)
+
+    def alarm_notifications(self) -> list[dict[str, Any]]:
+        return list(self._opcua_alarms)
+
+    def capabilities(self) -> dict[str, Any]:
+        return dict(self._server_capabilities)
+
+    def _event_to_dict(self, event: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {"received_at": datetime.now(UTC).isoformat()}
+        for name in dir(event):
+            if name.startswith("_"):
+                continue
+            try:
+                value = getattr(event, name)
+            except Exception:
+                continue
+            if callable(value):
+                continue
+            payload[name] = self._json_safe(value)
+        return payload
+
+    def _looks_like_alarm_or_condition(self, payload: dict[str, Any], event_type: str) -> bool:
+        event_type_lower = event_type.lower()
+        if "condition" in event_type_lower or "alarm" in event_type_lower:
+            return True
+        condition_fields = {
+            "AckedState",
+            "ActiveState",
+            "ConfirmedState",
+            "ConditionClassId",
+            "ConditionName",
+            "EnabledState",
+            "Retain",
+            "Severity",
+        }
+        if any(field in payload for field in condition_fields):
+            return True
+        return self.endpoint.alarms_conditions.enabled and not self.endpoint.events.enabled
+
+    def _backpressure_capabilities(self) -> dict[str, Any]:
+        defaults = self.endpoint.subscription_defaults
+        return {
+            "notification_queue_size": defaults.notification_queue_size,
+            "notification_workers": defaults.notification_workers,
+            "coalesce_notifications": defaults.coalesce_notifications,
+            "suppress_unchanged_values": defaults.suppress_unchanged_values,
+            "monitored_item_queue_size": defaults.queue_size,
+        }
+
+    def _json_safe(self, value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        if isinstance(value, (list, tuple)):
+            return [self._json_safe(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): self._json_safe(item) for key, item in value.items()}
+        return str(value)
+
+    def _polling_error_backoff_seconds(self, node_cfg: NodeRegistryEntry) -> float:
+        defaults = self.endpoint.subscription_defaults
+        failures = max(1, self._polling_failure_counts.get(node_cfg.id, 1))
+        delay = defaults.polling_error_backoff_seconds * (2 ** (failures - 1))
+        return min(max(0.2, delay), defaults.polling_error_backoff_max_seconds)
+
+    def _should_suppress_unchanged(self, node_id: str, value: Any, status_raw: int | None) -> bool:
+        if not self.endpoint.subscription_defaults.suppress_unchanged_values:
+            return False
+        signature = (self._json_safe(value), status_raw)
+        previous = self._last_notification_signatures.get(node_id)
+        self._last_notification_signatures[node_id] = signature
+        return previous == signature
 
     def _refresh_subscribed_metrics(self) -> None:
         active_subscription_nodes = [
