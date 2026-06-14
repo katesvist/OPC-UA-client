@@ -67,6 +67,10 @@ services:
     image: rabbitmq:4-management
     profiles:
       - local-rabbit
+    networks:
+      default:
+        aliases:
+          - params-validator-rabbitmq
     restart: unless-stopped
     ports:
       - "127.0.0.1:5672:5672"

@@ -131,6 +131,46 @@ def build_router() -> APIRouter:
     ) -> list[dict[str, object]]:
         return [item.model_dump(mode="json") for item in await runtime.buffer.dead_letters()]
 
+    @router.get("/publish/audit")
+    async def publish_audit(
+        limit: int = 500,
+        endpoint_id: str | None = None,
+        node_id: str | None = None,
+        decision: str | None = None,
+        status_code: int | None = None,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> list[dict[str, object]]:
+        return await runtime.diagnostics.publish_audit(
+            limit=limit,
+            endpoint_id=endpoint_id,
+            node_id=node_id,
+            decision=decision,
+            status_code=status_code,
+        )
+
+    @router.get("/publish/stats")
+    async def publish_stats(
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> dict[str, object]:
+        return await runtime.diagnostics.publish_stats()
+
+    @router.get("/status-alarms")
+    async def status_alarms(
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> list[dict[str, object]]:
+        return await runtime.diagnostics.status_alarms()
+
+    @router.get("/status-alarms/history")
+    async def status_alarm_history(
+        limit: int = 200,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> list[dict[str, object]]:
+        return await runtime.diagnostics.status_alarm_history(limit=limit)
+
     @router.get("/events")
     async def events(
         endpoint_id: str | None = None,

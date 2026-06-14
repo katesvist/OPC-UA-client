@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from src.adapters.metrics.registry import MetricsRegistry
 from src.config.models import EndpointConfig, NodeRegistryEntry
 from src.domain.entities.enums import QualityCategory, ValidationState
-from src.domain.entities.errors import DatatypeMappingError, DownstreamPublishError
+from src.domain.entities.errors import DatatypeMappingError
 from src.domain.entities.models import Observation, ParameterEvent
 from src.domain.ports.buffer import EventBuffer
+from src.domain.ports.diagnostics import DiagnosticsStore
 from src.domain.ports.publisher import DownstreamPublisher
 from src.domain.quality.interpreter import QualityInterpreter
+from src.domain.services.diagnostics import NoopDiagnosticsStore, build_publish_audit_record
 from src.domain.transform.normalizer import ValueNormalizer
 from src.domain.validation.engine import ValidationEngine
+
+logger = logging.getLogger(__name__)
 
 
 class EventPipeline:
@@ -24,6 +31,7 @@ class EventPipeline:
         quality_interpreter: QualityInterpreter | None = None,
         normalizer: ValueNormalizer | None = None,
         validator: ValidationEngine | None = None,
+        diagnostics: DiagnosticsStore | None = None,
     ) -> None:
         self.publisher = publisher
         self.buffer = buffer
@@ -31,8 +39,11 @@ class EventPipeline:
         self.quality_interpreter = quality_interpreter or QualityInterpreter()
         self.normalizer = normalizer or ValueNormalizer()
         self.validator = validator or ValidationEngine()
+        self.diagnostics = diagnostics or NoopDiagnosticsStore()
         self._sequence = 0
         self._last_values: dict[str, tuple[Any, datetime | None]] = {}
+        self._last_published_signatures: dict[str, tuple[str, Any]] = {}
+        self._node_locks: dict[str, asyncio.Lock] = {}
 
     async def process(self, observation: Observation, endpoint: EndpointConfig, node: NodeRegistryEntry) -> ParameterEvent | None:
         self.metrics.inc_incoming_events(observation.endpoint_id)
@@ -48,7 +59,7 @@ class EventPipeline:
 
         try:
             normalized_value, value_type, unit = self.normalizer.normalize(observation.raw_value, node)
-        except DatatypeMappingError as exc:
+        except (DatatypeMappingError, TypeError, ValueError) as exc:
             event = self._build_error_event(
                 observation=observation,
                 endpoint=endpoint,
@@ -58,7 +69,8 @@ class EventPipeline:
                 status_text=str(exc),
                 errors=[str(exc)],
             )
-            await self._publish_or_buffer(event, str(exc))
+            decision, error = await self._publish_or_buffer(event, str(exc))
+            await self._record_diagnostics(event, decision, reason="datatype_mapping_error", error=error)
             self.metrics.inc_invalid_events(observation.endpoint_id)
             return event
 
@@ -70,9 +82,6 @@ class EventPipeline:
             previous_value=previous_value,
             previous_timestamp=previous_timestamp,
         )
-
-        if validation.is_duplicate:
-            return None
 
         event = ParameterEvent(
             source_id=observation.source_id,
@@ -126,20 +135,57 @@ class EventPipeline:
             acquisition_mode=observation.acquisition_mode,
             sequence_id=self._sequence,
         )
-        self._last_values[self._key(observation)] = (normalized_value, observation.source_timestamp)
+        if validation.is_duplicate:
+            await self._record_diagnostics(event, "suppressed", reason="validation_duplicate")
+            return None
 
-        self._count_validation_metrics(observation.endpoint_id, validation.state, quality.category)
-        await self._publish_or_buffer(event, "Первичная публикация не удалась.")
+        key = self._key(observation)
+        async with self._lock_for_key(key):
+            if endpoint.subscription_defaults.suppress_unchanged_values:
+                signature = self._event_signature(event)
+                if self._last_published_signatures.get(key) == signature:
+                    self._last_values[key] = (normalized_value, observation.source_timestamp)
+                    await self._record_diagnostics(event, "suppressed", reason="unchanged_value_and_status")
+                    return None
+
+            self._last_values[key] = (normalized_value, observation.source_timestamp)
+            self._count_validation_metrics(observation.endpoint_id, validation.state, quality.category)
+            decision, error = await self._publish_or_buffer(event, "Первичная публикация не удалась.")
+            await self._record_diagnostics(event, decision, error=error)
+
+            if endpoint.subscription_defaults.suppress_unchanged_values:
+                self._last_published_signatures[key] = self._event_signature(event)
         return event
 
-    async def _publish_or_buffer(self, event: ParameterEvent, error_message: str) -> None:
+    async def _publish_or_buffer(self, event: ParameterEvent, error_message: str) -> tuple[str, str | None]:
         try:
             await self.publisher.publish(event)
+            return "published", None
         except Exception as exc:
             self.metrics.inc_downstream_publish_failures(event.endpoint_id)
             await self.buffer.enqueue(event, str(exc) or error_message)
             self.metrics.inc_buffered_events(event.endpoint_id)
-            raise DownstreamPublishError(str(exc)) from exc
+            return "buffered", str(exc) or error_message
+
+    async def _record_diagnostics(
+        self,
+        event: ParameterEvent,
+        decision: str,
+        *,
+        reason: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        record = build_publish_audit_record(
+            event=event,
+            decision=decision,
+            published_status=self._published_status(event),
+            reason=reason,
+            error=error,
+        )
+        try:
+            await self.diagnostics.record_publish_decision(record)
+        except Exception:
+            logger.exception("publish_diagnostics_record_failed")
 
     def _build_error_event(
         self,
@@ -220,6 +266,28 @@ class EventPipeline:
 
     def _key(self, observation: Observation) -> str:
         return f"{observation.endpoint_id}:{observation.node_id}"
+
+    def _lock_for_key(self, key: str) -> asyncio.Lock:
+        lock = self._node_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._node_locks[key] = lock
+        return lock
+
+    def _event_signature(self, event: ParameterEvent) -> tuple[str, int]:
+        return (self._stable_value(event.value_normalized), self._published_status(event))
+
+    def _stable_value(self, value: Any) -> str:
+        return json.dumps(value, sort_keys=True, default=str, ensure_ascii=False, separators=(",", ":"))
+
+    def _published_status(self, event: ParameterEvent) -> int:
+        raw_status = event.metadata.get("opcua", {}).get("status_code_raw")
+        try:
+            if raw_status is not None:
+                return max(0, min(int(raw_status), 0xFFFFFFFF))
+        except (TypeError, ValueError):
+            pass
+        return 0 if event.quality_code.lower() == "good" else 1
 
     def _event_value_type(self, node: NodeRegistryEntry) -> str:
         if node.value_shape == "array":

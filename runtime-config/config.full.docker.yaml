@@ -28,9 +28,18 @@ publisher:
   message_format: params_validator_envelope
   schema_version: '1.0'
   declare_exchange: true
-  declare_queue: true
+  declare_queue: false
   durable: true
   timeout_seconds: 5
+diagnostics:
+  enabled: true
+  redis_url: redis://redis:6379/0
+  key_prefix: opcua-client
+  max_records: 20000
+  ttl_seconds: 86400
+  value_preview_max_length: 500
+  status_alarm_clear_after_seconds: 600
+  overload_major_node_threshold: 100
 endpoints:
 - id: remote-opc-server
   enabled: true

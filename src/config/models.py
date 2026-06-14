@@ -190,6 +190,17 @@ class LoggingSettings(BaseModel):
     json_logs: bool = True
 
 
+class DiagnosticsSettings(BaseModel):
+    enabled: bool = True
+    redis_url: str | None = None
+    key_prefix: str = "opcua-client"
+    max_records: int = 20000
+    ttl_seconds: int = 86400
+    value_preview_max_length: int = 500
+    status_alarm_clear_after_seconds: int = 600
+    overload_major_node_threshold: int = 100
+
+
 class ServiceSettings(BaseModel):
     name: str = "opc-ua-client-service"
     environment: str = "dev"
@@ -202,5 +213,6 @@ class AppConfigModel(BaseModel):
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     buffer: BufferSettings = Field(default_factory=BufferSettings)
     publisher: PublisherSettings = Field(default_factory=PublisherSettings)
+    diagnostics: DiagnosticsSettings = Field(default_factory=DiagnosticsSettings)
     endpoints: list[EndpointConfig] = Field(default_factory=list)
     nodes: list[NodeRegistryEntry] = Field(default_factory=list)

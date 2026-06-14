@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from src.adapters.metrics.registry import MetricsRegistry
 from src.domain.entities.enums import AcquisitionMode, ValidationState
-from src.domain.entities.errors import DownstreamPublishError
 from src.domain.entities.models import Observation
 from src.domain.services.pipeline import EventPipeline
 
@@ -66,6 +65,32 @@ class PublisherFailOnce:
         return None
 
 
+class DiagnosticsRecorder:
+    def __init__(self) -> None:
+        self.records = []
+
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    async def record_publish_decision(self, record) -> None:
+        self.records.append(record)
+
+    async def publish_audit(self, *, limit=500, endpoint_id=None, node_id=None, decision=None, status_code=None):
+        return self.records[:limit]
+
+    async def publish_stats(self):
+        return {}
+
+    async def status_alarms(self):
+        return []
+
+    async def status_alarm_history(self, *, limit=200):
+        return []
+
+
 @pytest.mark.asyncio
 async def test_pipeline_builds_valid_event(endpoint_config, node_config) -> None:
     publisher = PublisherOk()
@@ -109,9 +134,9 @@ async def test_pipeline_buffers_on_publish_failure(endpoint_config, node_config)
         source_timestamp=datetime.now(UTC),
     )
 
-    with pytest.raises(DownstreamPublishError):
-        await pipeline.process(observation, endpoint_config, node_config)
+    event = await pipeline.process(observation, endpoint_config, node_config)
 
+    assert event is not None
     assert len(buffer.items) == 1
 
 
@@ -190,3 +215,127 @@ async def test_pipeline_normalizes_integer_array(endpoint_config, node_config) -
     assert event.metadata["node_registry"]["value_shape"] == "array"
     assert event.metadata["value_rank"] == 1
     assert event.metadata["array_dimensions"] == [3]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_converts_unexpected_normalization_error_to_invalid_event(endpoint_config, node_config) -> None:
+    publisher = PublisherOk()
+    buffer = InMemoryBuffer()
+    diagnostics = DiagnosticsRecorder()
+    pipeline = EventPipeline(publisher=publisher, buffer=buffer, metrics=MetricsRegistry(), diagnostics=diagnostics)
+    observation = Observation(
+        endpoint_id=endpoint_config.id,
+        source_id=endpoint_config.metadata.source_id,
+        owner_type=endpoint_config.metadata.owner_type,
+        owner_id=endpoint_config.metadata.owner_id,
+        node_id=node_config.node_id,
+        raw_value=datetime.now(UTC),
+        status_code="Good",
+        acquisition_mode=AcquisitionMode.SUBSCRIPTION,
+        source_timestamp=datetime.now(UTC),
+    )
+
+    event = await pipeline.process(observation, endpoint_config, node_config)
+
+    assert event is not None
+    assert event.validation_state == ValidationState.INVALID
+    assert len(publisher.events) == 1
+    assert diagnostics.records[0]["decision"] == "published"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_suppresses_same_value_and_status(endpoint_config, node_config) -> None:
+    publisher = PublisherOk()
+    buffer = InMemoryBuffer()
+    diagnostics = DiagnosticsRecorder()
+    pipeline = EventPipeline(publisher=publisher, buffer=buffer, metrics=MetricsRegistry(), diagnostics=diagnostics)
+    first_timestamp = datetime.now(UTC)
+    second_timestamp = first_timestamp + timedelta(seconds=1)
+
+    first = Observation(
+        endpoint_id=endpoint_config.id,
+        source_id=endpoint_config.metadata.source_id,
+        owner_type=endpoint_config.metadata.owner_type,
+        owner_id=endpoint_config.metadata.owner_id,
+        node_id=node_config.node_id,
+        raw_value=12.3,
+        status_code="Good",
+        acquisition_mode=AcquisitionMode.SUBSCRIPTION,
+        source_timestamp=first_timestamp,
+        metadata={"opcua": {"status_code_raw": 0}},
+    )
+    duplicate = first.model_copy(update={"source_timestamp": second_timestamp})
+
+    first_event = await pipeline.process(first, endpoint_config, node_config)
+    duplicate_event = await pipeline.process(duplicate, endpoint_config, node_config)
+
+    assert first_event is not None
+    assert duplicate_event is None
+    assert len(publisher.events) == 1
+    assert [record["decision"] for record in diagnostics.records] == ["published", "suppressed"]
+    assert diagnostics.records[1]["reason"] == "unchanged_value_and_status"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_publishes_same_value_when_status_changes(endpoint_config, node_config) -> None:
+    publisher = PublisherOk()
+    buffer = InMemoryBuffer()
+    diagnostics = DiagnosticsRecorder()
+    pipeline = EventPipeline(publisher=publisher, buffer=buffer, metrics=MetricsRegistry(), diagnostics=diagnostics)
+    timestamp = datetime.now(UTC)
+
+    first = Observation(
+        endpoint_id=endpoint_config.id,
+        source_id=endpoint_config.metadata.source_id,
+        owner_type=endpoint_config.metadata.owner_type,
+        owner_id=endpoint_config.metadata.owner_id,
+        node_id=node_config.node_id,
+        raw_value=12.3,
+        status_code="Good",
+        acquisition_mode=AcquisitionMode.SUBSCRIPTION,
+        source_timestamp=timestamp,
+        metadata={"opcua": {"status_code_raw": 3080192}},
+    )
+    status_recovery = first.model_copy(update={"metadata": {"opcua": {"status_code_raw": 0}}})
+
+    first_event = await pipeline.process(first, endpoint_config, node_config)
+    recovery_event = await pipeline.process(status_recovery, endpoint_config, node_config)
+
+    assert first_event is not None
+    assert recovery_event is not None
+    assert len(publisher.events) == 2
+    assert [record["published_status"] for record in diagnostics.records] == [3080192, 0]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_suppresses_same_published_status_when_raw_status_is_missing(endpoint_config, node_config) -> None:
+    publisher = PublisherOk()
+    buffer = InMemoryBuffer()
+    pipeline = EventPipeline(publisher=publisher, buffer=buffer, metrics=MetricsRegistry())
+    timestamp = datetime.now(UTC)
+
+    first = Observation(
+        endpoint_id=endpoint_config.id,
+        source_id=endpoint_config.metadata.source_id,
+        owner_type=endpoint_config.metadata.owner_type,
+        owner_id=endpoint_config.metadata.owner_id,
+        node_id=node_config.node_id,
+        raw_value=12.3,
+        status_code="Good",
+        acquisition_mode=AcquisitionMode.SUBSCRIPTION,
+        source_timestamp=timestamp,
+        metadata={"opcua": {"status_code_raw": 0}},
+    )
+    duplicate_without_raw_status = first.model_copy(
+        update={
+            "source_timestamp": timestamp + timedelta(seconds=1),
+            "metadata": {"opcua": {}},
+        }
+    )
+
+    first_event = await pipeline.process(first, endpoint_config, node_config)
+    duplicate_event = await pipeline.process(duplicate_without_raw_status, endpoint_config, node_config)
+
+    assert first_event is not None
+    assert duplicate_event is None
+    assert len(publisher.events) == 1

@@ -82,7 +82,6 @@ class OpcUaConnectionManager:
         self._notification_workers: set[asyncio.Task[None]] = set()
         self._pending_notifications: dict[str, tuple[Any, Any, Any]] = {}
         self._queued_notification_node_ids: set[str] = set()
-        self._last_notification_signatures: dict[str, tuple[Any, int | None]] = {}
         self._polling_failure_counts: dict[str, int] = {}
         self._event_subscription_handles: list[Any] = []
         self._opcua_events: deque[dict[str, Any]] = deque(maxlen=max(1, endpoint.events.max_cached_events))
@@ -110,9 +109,10 @@ class OpcUaConnectionManager:
             with suppress(asyncio.CancelledError):
                 await self._supervisor_task
         await self._cleanup_connection()
-        for task in self._notification_workers:
+        notification_workers = list(self._notification_workers)
+        for task in notification_workers:
             task.cancel()
-        for task in self._notification_workers:
+        for task in notification_workers:
             with suppress(asyncio.CancelledError):
                 await task
         self._notification_workers.clear()
@@ -331,11 +331,6 @@ class OpcUaConnectionManager:
                 },
                 tags=node_config.tags,
             )
-            if self._should_suppress_unchanged(node_id, value, self._extract_status_raw(data_value)):
-                now = datetime.now(UTC)
-                self._last_data_at = now
-                self.registry.touch(self.endpoint.id, node_id, now)
-                return
             await self.pipeline.process(observation, self.endpoint, node_config)
             self._last_data_at = datetime.now(UTC)
             self.registry.touch(self.endpoint.id, node_id, self._last_data_at)
@@ -579,7 +574,6 @@ class OpcUaConnectionManager:
         self._background_tasks.clear()
         self._pending_notifications.clear()
         self._queued_notification_node_ids.clear()
-        self._last_notification_signatures.clear()
         self._polling_failure_counts.clear()
         while not self._notification_queue.empty():
             with suppress(asyncio.QueueEmpty):
@@ -893,14 +887,6 @@ class OpcUaConnectionManager:
         failures = max(1, self._polling_failure_counts.get(node_cfg.id, 1))
         delay = defaults.polling_error_backoff_seconds * (2 ** (failures - 1))
         return min(max(0.2, delay), defaults.polling_error_backoff_max_seconds)
-
-    def _should_suppress_unchanged(self, node_id: str, value: Any, status_raw: int | None) -> bool:
-        if not self.endpoint.subscription_defaults.suppress_unchanged_values:
-            return False
-        signature = (self._json_safe(value), status_raw)
-        previous = self._last_notification_signatures.get(node_id)
-        self._last_notification_signatures[node_id] = signature
-        return previous == signature
 
     def _refresh_subscribed_metrics(self) -> None:
         active_subscription_nodes = [

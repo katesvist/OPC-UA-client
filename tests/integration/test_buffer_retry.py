@@ -9,7 +9,6 @@ from src.adapters.buffer.redis_buffer import RedisEventBuffer
 from src.adapters.metrics.registry import MetricsRegistry
 from src.config.models import BufferSettings
 from src.domain.entities.enums import AcquisitionMode
-from src.domain.entities.errors import DownstreamPublishError
 from src.domain.entities.models import Observation
 from src.domain.services.buffer_worker import BufferedDeliveryWorker
 from src.domain.services.pipeline import EventPipeline
@@ -61,9 +60,9 @@ async def test_buffer_flushes_after_retry(tmp_path, endpoint_config, node_config
         source_timestamp=datetime.now(UTC),
     )
 
-    with pytest.raises(DownstreamPublishError):
-        await pipeline.process(observation, endpoint_config, node_config)
+    event = await pipeline.process(observation, endpoint_config, node_config)
 
+    assert event is not None
     await wait_until(lambda: len(publisher.events) == 1, timeout_seconds=5)
     stats = await buffer.stats()
     assert stats["buffered_events"] == 0

@@ -11,8 +11,10 @@ from src.config.settings import get_config_path, load_settings
 from src.config.store import YamlConfigStore
 from src.domain.entities.models import NodeConfigApplyResult
 from src.domain.ports.buffer import EventBuffer
+from src.domain.ports.diagnostics import DiagnosticsStore
 from src.domain.ports.publisher import DownstreamPublisher
 from src.domain.services.buffer_worker import BufferedDeliveryWorker
+from src.domain.services.diagnostics import create_diagnostics_store
 from src.domain.services.health import HealthService
 from src.domain.services.pipeline import EventPipeline
 from src.modules.connections.manager import ConnectionsCoordinator
@@ -25,6 +27,7 @@ class AppRuntime:
     metrics: MetricsRegistry
     registry: NodeRegistry
     buffer: EventBuffer
+    diagnostics: DiagnosticsStore
     publisher: DownstreamPublisher
     pipeline: EventPipeline
     connections: ConnectionsCoordinator
@@ -41,11 +44,13 @@ class AppRuntime:
         metrics = MetricsRegistry()
         registry = NodeRegistry(config.nodes)
         buffer = create_buffer(config.buffer)
+        diagnostics = create_diagnostics_store(config.diagnostics, config.buffer)
         publisher = create_publisher(config.publisher)
         pipeline = EventPipeline(
             publisher=publisher,
             buffer=buffer,
             metrics=metrics,
+            diagnostics=diagnostics,
         )
         connections = ConnectionsCoordinator(
             endpoints=config.endpoints,
@@ -64,6 +69,7 @@ class AppRuntime:
             metrics=metrics,
             registry=registry,
             buffer=buffer,
+            diagnostics=diagnostics,
             publisher=publisher,
             pipeline=pipeline,
             connections=connections,
@@ -83,6 +89,7 @@ class AppRuntime:
     async def start(self) -> None:
         await self.buffer.start()
         self.buffer_ready = True
+        await self.diagnostics.start()
         await self.buffer_worker.start()
         await self.connections.start()
 
@@ -90,6 +97,7 @@ class AppRuntime:
         await self.connections.stop()
         await self.buffer_worker.stop()
         await self.publisher.close()
+        await self.diagnostics.close()
         await self.buffer.close()
 
     async def replace_nodes_config(self, nodes: list[NodeRegistryEntry]) -> list[NodeConfigApplyResult]:
