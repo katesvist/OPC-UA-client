@@ -57,6 +57,7 @@ class AppRuntime:
             registry=registry,
             pipeline=pipeline,
             metrics=metrics,
+            diagnostics=diagnostics,
         )
         buffer_worker = BufferedDeliveryWorker(
             buffer=buffer,

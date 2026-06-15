@@ -25,6 +25,9 @@ class NoopDiagnosticsStore:
     async def record_publish_decision(self, record: dict[str, Any]) -> None:
         return None
 
+    async def record_connection_event(self, record: dict[str, Any]) -> None:
+        return None
+
     async def publish_audit(
         self,
         *,
@@ -50,6 +53,14 @@ class NoopDiagnosticsStore:
         return []
 
     async def status_alarm_history(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        return []
+
+    async def connection_events(
+        self,
+        *,
+        limit: int = 200,
+        endpoint_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         return []
 
 
@@ -84,6 +95,21 @@ class RedisDiagnosticsStore:
             pipe.expire(self._audit_key, self.settings.ttl_seconds)
             await pipe.execute()
         await self._update_status_state(record)
+
+    async def record_connection_event(self, record: dict[str, Any]) -> None:
+        if not self.settings.enabled:
+            return
+        assert self.redis is not None
+        payload = {
+            "recorded_at": datetime.now(UTC).isoformat(),
+            **record,
+        }
+        serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.lpush(self._connection_events_key, serialized)
+            pipe.ltrim(self._connection_events_key, 0, max(self.settings.max_records - 1, 0))
+            pipe.expire(self._connection_events_key, self.settings.ttl_seconds)
+            await pipe.execute()
 
     async def publish_audit(
         self,
@@ -177,6 +203,22 @@ class RedisDiagnosticsStore:
         assert self.redis is not None
         rows = await self.redis.lrange(self._status_history_key, 0, max(limit - 1, 0))
         return [self._loads(row) for row in rows]
+
+    async def connection_events(
+        self,
+        *,
+        limit: int = 200,
+        endpoint_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        assert self.redis is not None
+        max_limit = max(1, min(limit, self.settings.max_records))
+        rows = await self.redis.lrange(self._connection_events_key, 0, max_limit - 1)
+        records = [self._loads(row) for row in rows]
+        return [
+            record
+            for record in records
+            if endpoint_id is None or record.get("endpoint_id") == endpoint_id
+        ]
 
     async def _update_status_state(self, record: dict[str, Any]) -> None:
         assert self.redis is not None
@@ -311,6 +353,10 @@ class RedisDiagnosticsStore:
     @property
     def _status_history_key(self) -> str:
         return f"{self.settings.key_prefix}:diagnostics:status:history"
+
+    @property
+    def _connection_events_key(self) -> str:
+        return f"{self.settings.key_prefix}:diagnostics:connection:events"
 
     def _active_status_key(self, raw_status: str) -> str:
         return f"{self.settings.key_prefix}:diagnostics:status:active:{raw_status}"

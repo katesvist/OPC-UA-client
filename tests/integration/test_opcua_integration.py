@@ -8,6 +8,7 @@ from src.adapters.metrics.registry import MetricsRegistry
 from src.adapters.publisher.noop import NoopPublisher
 from src.config.models import BufferSettings, EndpointConfig, EndpointMetadata, NodeConfig
 from src.domain.entities.enums import ConnectionState
+from src.domain.services.diagnostics import NoopDiagnosticsStore
 from src.domain.services.pipeline import EventPipeline
 from src.modules.connections.manager import ConnectionsCoordinator
 from src.modules.subscriptions.registry import NodeRegistry
@@ -44,7 +45,7 @@ async def test_opcua_subscription_receives_event() -> None:
         metrics = MetricsRegistry()
         pipeline = EventPipeline(publisher=publisher, buffer=buffer, metrics=metrics)
         registry = NodeRegistry([node])
-        coordinator = ConnectionsCoordinator([endpoint], registry, pipeline, metrics)
+        coordinator = ConnectionsCoordinator([endpoint], registry, pipeline, metrics, NoopDiagnosticsStore())
 
         await coordinator.start()
         await server.write_pressure(123.4)
@@ -109,7 +110,7 @@ async def test_opcua_browse_read_write_operations() -> None:
         metrics = MetricsRegistry()
         pipeline = EventPipeline(publisher=publisher, buffer=buffer, metrics=metrics)
         registry = NodeRegistry(nodes)
-        coordinator = ConnectionsCoordinator([endpoint], registry, pipeline, metrics)
+        coordinator = ConnectionsCoordinator([endpoint], registry, pipeline, metrics, NoopDiagnosticsStore())
 
         await coordinator.start()
         await wait_until(lambda: coordinator.statuses()[0].state in {ConnectionState.CONNECTED, ConnectionState.DEGRADED}, timeout_seconds=10)

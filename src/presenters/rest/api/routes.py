@@ -171,6 +171,15 @@ def build_router() -> APIRouter:
     ) -> list[dict[str, object]]:
         return await runtime.diagnostics.status_alarm_history(limit=limit)
 
+    @router.get("/connection-events")
+    async def connection_events(
+        limit: int = 200,
+        endpoint_id: str | None = None,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> list[dict[str, object]]:
+        return await runtime.connections.connection_events(limit=limit, endpoint_id=endpoint_id)
+
     @router.get("/events")
     async def events(
         endpoint_id: str | None = None,

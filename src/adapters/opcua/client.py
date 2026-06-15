@@ -4,7 +4,7 @@ import asyncio
 import inspect
 from collections import deque
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from asyncua import Client, ua
@@ -30,6 +30,8 @@ from src.domain.entities.models import (
     ReadResult,
     WriteResult,
 )
+from src.domain.ports.diagnostics import DiagnosticsStore
+from src.domain.services.diagnostics import NoopDiagnosticsStore
 from src.domain.services.pipeline import EventPipeline
 from src.modules.subscriptions.registry import NodeRegistry
 
@@ -55,11 +57,13 @@ class OpcUaConnectionManager:
         registry: NodeRegistry,
         pipeline: EventPipeline,
         metrics: MetricsRegistry,
+        diagnostics: DiagnosticsStore | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.registry = registry
         self.pipeline = pipeline
         self.metrics = metrics
+        self.diagnostics = diagnostics or NoopDiagnosticsStore()
         self.logger = get_logger(__name__).bind(endpoint_id=endpoint.id)
         self._stop_event = asyncio.Event()
         self._reconnect_event = asyncio.Event()
@@ -71,6 +75,14 @@ class OpcUaConnectionManager:
         self._connected_since: datetime | None = None
         self._last_data_at: datetime | None = None
         self._last_error: str | None = None
+        self._last_error_type: str | None = None
+        self._last_error_stage: str | None = None
+        self._last_attempt_at: datetime | None = None
+        self._next_retry_at: datetime | None = None
+        self._retry_delay_duration_seconds: float | None = None
+        self._cooldown_until: datetime | None = None
+        self._last_connected_at: datetime | None = None
+        self._connection_phase: str | None = "disconnected"
         self._reconnect_attempts = 0
         self._state = ConnectionState.DISCONNECTED
         self._node_metadata: dict[str, dict[str, Any]] = {}
@@ -118,6 +130,11 @@ class OpcUaConnectionManager:
         self._notification_workers.clear()
 
     async def reconnect(self) -> None:
+        self._connection_phase = "manual_reconnect"
+        self._next_retry_at = None
+        self._retry_delay_duration_seconds = None
+        self._cooldown_until = None
+        await self._record_connection_event("opcua_manual_reconnect_requested", stage="manual_reconnect")
         self._reconnect_event.set()
         await self._cleanup_connection()
 
@@ -166,10 +183,19 @@ class OpcUaConnectionManager:
             endpoint_id=self.endpoint.id,
             state=self._state,
             connected=self._state in {ConnectionState.CONNECTED, ConnectionState.DEGRADED},
+            connection_phase=self._connection_phase,
             last_error=self._last_error,
+            last_error_type=self._last_error_type,
+            last_error_stage=self._last_error_stage,
             connected_since=self._connected_since,
+            last_connected_at=self._last_connected_at,
             last_data_at=self._last_data_at,
             reconnect_attempts=self._reconnect_attempts,
+            last_attempt_at=self._last_attempt_at,
+            next_retry_at=self._next_retry_at,
+            retry_delay_seconds=self._retry_delay_duration_seconds,
+            cooldown=self._cooldown_until is not None and self._cooldown_until > datetime.now(UTC),
+            cooldown_until=self._cooldown_until,
         )
 
     async def browse(
@@ -349,30 +375,86 @@ class OpcUaConnectionManager:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._last_error = str(exc)
-                self.logger.warning("opcua_connection_cycle_failed", error=str(exc))
+                stage = self._last_error_stage or self._connection_phase or "connection"
+                error = self._format_exception(exc, stage=stage)
+                self._last_error = error
+                self._last_error_type = type(exc).__name__ or "Error"
+                self._last_error_stage = stage
+                self.logger.warning("opcua_connection_cycle_failed", error=error, stage=stage, error_type=self._last_error_type)
+                await self._record_connection_event(
+                    "opcua_connection_cycle_failed",
+                    stage=stage,
+                    error=error,
+                    error_type=self._last_error_type,
+                )
                 self.metrics.set_active_connection(self.endpoint.id, False)
                 self._state = ConnectionState.RECONNECTING if self._connected_since else ConnectionState.FAILED
                 await self._cleanup_connection(preserve_state=True)
                 self._reconnect_attempts += 1
                 self.metrics.inc_reconnect_attempts(self.endpoint.id)
-                await asyncio.sleep(self._retry_delay_seconds(self._reconnect_attempts))
+                delay = self._retry_delay_seconds(self._reconnect_attempts)
+                self._retry_delay_duration_seconds = delay
+                self._next_retry_at = datetime.now(UTC) + timedelta(seconds=delay)
+                if self._is_cooldown_attempt(self._reconnect_attempts):
+                    self._connection_phase = "cooldown"
+                    self._cooldown_until = self._next_retry_at
+                    self.logger.warning(
+                        "opcua_reconnect_cooldown_started",
+                        attempts=self._reconnect_attempts,
+                        cooldown_seconds=delay,
+                    )
+                    await self._record_connection_event(
+                        "opcua_reconnect_cooldown_started",
+                        stage="cooldown",
+                        attempts=self._reconnect_attempts,
+                        cooldown_seconds=delay,
+                        next_retry_at=self._next_retry_at.isoformat(),
+                    )
+                else:
+                    self._connection_phase = "retry_wait"
+                    self._cooldown_until = None
+                await self._wait_before_retry(delay)
 
     async def _connect_once(self) -> None:
         self._state = ConnectionState.CONNECTING if self._reconnect_attempts == 0 else ConnectionState.RECONNECTING
+        self._connection_phase = "connecting"
+        self._last_attempt_at = datetime.now(UTC)
+        self._next_retry_at = None
+        self._retry_delay_duration_seconds = None
+        self._cooldown_until = None
         self.logger.info("opcua_connecting", url=self.endpoint.url, state=self._state.value)
+        await self._record_connection_event(
+            "opcua_connecting",
+            stage="connecting",
+            url=self.endpoint.url,
+            state=self._state.value,
+            attempts=self._reconnect_attempts,
+        )
         selected_url = await self._select_endpoint_url()
+        self._connection_phase = "session"
+        self._last_error_stage = "session"
         self._client = Client(url=selected_url, timeout=self.endpoint.request_timeout_seconds)
         self._client.session_timeout = self.endpoint.session_timeout_ms
         await self._apply_security(self._client)
         await self._client.connect()
+        self._connection_phase = "session_check"
+        self._last_error_stage = "session_check"
         await self._verify_connection_ready()
         self._connected_since = datetime.now(UTC)
+        self._last_connected_at = self._connected_since
         self._last_error = None
+        self._last_error_type = None
+        self._last_error_stage = None
+        self._connection_phase = "connected"
         self._state = ConnectionState.CONNECTED
         self.metrics.set_active_connection(self.endpoint.id, True)
         self.logger.info("opcua_connected", url=selected_url)
+        await self._record_connection_event("opcua_connected", stage="connected", url=selected_url)
+        self._connection_phase = "subscriptions"
+        self._last_error_stage = "subscriptions"
         await self._setup_monitored_items()
+        self._connection_phase = "monitoring"
+        self._last_error_stage = None
         self._reconnect_attempts = 0
 
     async def _monitor_connection(self) -> None:
@@ -618,17 +700,34 @@ class OpcUaConnectionManager:
             return self.endpoint.url
 
         discovery_url = discovery.discovery_url or self.endpoint.url
+        self._connection_phase = "discovery"
+        self._last_error_stage = "discovery"
         discovery_client = Client(url=discovery_url, timeout=self.endpoint.request_timeout_seconds)
         try:
             endpoints = await discovery_client.connect_and_get_server_endpoints()
         except Exception as exc:
-            self.logger.warning("opcua_discovery_failed", url=discovery_url, error=str(exc))
+            error = self._format_exception(exc, stage="discovery")
+            self.logger.warning("opcua_discovery_failed", url=discovery_url, error=error, error_type=type(exc).__name__)
+            await self._record_connection_event(
+                "opcua_discovery_failed",
+                stage="discovery",
+                url=discovery_url,
+                error=error,
+                error_type=type(exc).__name__,
+                required=discovery.required,
+            )
             if discovery.required:
                 raise
             return self.endpoint.url
 
         self.logger.info(
             "opcua_discovery_completed",
+            endpoint_count=len(endpoints),
+            configured_url=self.endpoint.url,
+        )
+        await self._record_connection_event(
+            "opcua_discovery_completed",
+            stage="discovery",
             endpoint_count=len(endpoints),
             configured_url=self.endpoint.url,
         )
@@ -640,6 +739,11 @@ class OpcUaConnectionManager:
         if selected is None:
             message = "OPC UA server did not advertise an endpoint matching configured security."
             self.logger.warning("opcua_endpoint_selection_failed", error=message)
+            await self._record_connection_event(
+                "opcua_endpoint_selection_failed",
+                stage="endpoint_selection",
+                error=message,
+            )
             if discovery.required:
                 raise ConnectionError(message)
             return self.endpoint.url
@@ -647,6 +751,14 @@ class OpcUaConnectionManager:
         selected_url = str(getattr(selected, "EndpointUrl", self.endpoint.url) or self.endpoint.url)
         self.logger.info(
             "opcua_endpoint_selected",
+            url=selected_url,
+            security_mode=getattr(getattr(selected, "SecurityMode", None), "name", None),
+            security_policy=getattr(selected, "SecurityPolicyUri", None),
+            policy=discovery.endpoint_selection_policy,
+        )
+        await self._record_connection_event(
+            "opcua_endpoint_selected",
+            stage="endpoint_selection",
             url=selected_url,
             security_mode=getattr(getattr(selected, "SecurityMode", None), "name", None),
             security_policy=getattr(selected, "SecurityPolicyUri", None),
@@ -921,21 +1033,56 @@ class OpcUaConnectionManager:
         await self._client.check_connection()
 
     def _retry_delay_seconds(self, attempt: int) -> float:
-        policy = self.endpoint.reconnect_policy
-        if policy.failure_threshold > 0 and attempt >= policy.failure_threshold:
-            cooldown = max(0.0, policy.cooldown_after_failures_seconds)
-            self.logger.warning(
-                "opcua_reconnect_cooldown_started",
-                attempts=attempt,
-                cooldown_seconds=cooldown,
-            )
-            return cooldown
+        if self._is_cooldown_attempt(attempt):
+            return max(0.0, self.endpoint.reconnect_policy.cooldown_after_failures_seconds)
         return self._backoff_seconds(attempt)
+
+    def _is_cooldown_attempt(self, attempt: int) -> bool:
+        policy = self.endpoint.reconnect_policy
+        return policy.failure_threshold > 0 and attempt >= policy.failure_threshold
+
+    async def _wait_before_retry(self, delay: float) -> None:
+        if delay <= 0:
+            return
+        try:
+            await asyncio.wait_for(self._reconnect_event.wait(), timeout=delay)
+        except TimeoutError:
+            return
+        self._reconnect_event.clear()
+        self._next_retry_at = None
+        self._retry_delay_duration_seconds = None
+        self._cooldown_until = None
+        self._connection_phase = "reconnecting"
+        await self._record_connection_event("opcua_retry_wait_interrupted", stage="manual_reconnect")
 
     def _backoff_seconds(self, attempt: int) -> float:
         policy = self.endpoint.reconnect_policy
         delay = policy.initial_delay_seconds * (policy.backoff_multiplier ** max(attempt - 1, 0))
         return min(delay, policy.max_delay_seconds)
+
+    def _format_exception(self, exc: Exception, *, stage: str) -> str:
+        message = str(exc).strip()
+        error_type = type(exc).__name__ or "Error"
+        if message:
+            return f"{error_type}: {message}"
+        if isinstance(exc, TimeoutError):
+            return f"TimeoutError during {stage} after {self.endpoint.request_timeout_seconds:g}s"
+        return f"{error_type} during {stage}"
+
+    async def _record_connection_event(self, event: str, *, stage: str, **extra: Any) -> None:
+        try:
+            await self.diagnostics.record_connection_event(
+                {
+                    "endpoint_id": self.endpoint.id,
+                    "event": event,
+                    "stage": stage,
+                    "state": self._state.value,
+                    "phase": self._connection_phase,
+                    **extra,
+                }
+            )
+        except Exception:
+            self.logger.exception("connection_diagnostics_record_failed")
 
     def _extract_status_code(self, data_value: Any) -> str:
         status = getattr(data_value, "StatusCode", None) or getattr(data_value, "StatusCode_", None)

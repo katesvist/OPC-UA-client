@@ -12,6 +12,7 @@ from src.domain.entities.models import (
     ReadResult,
     WriteResult,
 )
+from src.domain.ports.diagnostics import DiagnosticsStore
 from src.domain.services.pipeline import EventPipeline
 from src.modules.subscriptions.registry import NodeRegistry
 
@@ -23,12 +24,14 @@ class ConnectionsCoordinator:
         registry: NodeRegistry,
         pipeline: EventPipeline,
         metrics: MetricsRegistry,
+        diagnostics: DiagnosticsStore,
     ) -> None:
         self._pipeline = pipeline
         self._metrics = metrics
+        self._diagnostics = diagnostics
         self._all_endpoints: dict[str, EndpointConfig] = {e.id: e for e in endpoints}
         self._managers = {
-            endpoint.id: OpcUaConnectionManager(endpoint, registry, pipeline, metrics)
+            endpoint.id: OpcUaConnectionManager(endpoint, registry, pipeline, metrics, diagnostics)
             for endpoint in endpoints
             if endpoint.enabled
         }
@@ -105,6 +108,14 @@ class ConnectionsCoordinator:
             {"endpoint_id": manager.endpoint.id, **manager.capabilities()}
             for manager in managers
         ]
+
+    async def connection_events(
+        self,
+        *,
+        limit: int = 200,
+        endpoint_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        return await self._diagnostics.connection_events(limit=limit, endpoint_id=endpoint_id)
 
     async def replace_nodes(self, nodes: list[NodeRegistryEntry]) -> list[NodeConfigApplyResult]:
         old_by_id = {node.id: node for node in self.registry.all()}
@@ -188,7 +199,13 @@ class ConnectionsCoordinator:
             await existing.stop()
         self._all_endpoints[endpoint_cfg.id] = endpoint_cfg
         if endpoint_cfg.enabled:
-            manager = OpcUaConnectionManager(endpoint_cfg, self.registry, self._pipeline, self._metrics)
+            manager = OpcUaConnectionManager(
+                endpoint_cfg,
+                self.registry,
+                self._pipeline,
+                self._metrics,
+                self._diagnostics,
+            )
             self._managers[endpoint_cfg.id] = manager
             await manager.start()
 

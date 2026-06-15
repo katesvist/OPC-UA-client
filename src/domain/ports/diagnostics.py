@@ -10,6 +10,8 @@ class DiagnosticsStore(Protocol):
 
     async def record_publish_decision(self, record: dict[str, Any]) -> None: ...
 
+    async def record_connection_event(self, record: dict[str, Any]) -> None: ...
+
     async def publish_audit(
         self,
         *,
@@ -25,3 +27,10 @@ class DiagnosticsStore(Protocol):
     async def status_alarms(self) -> list[dict[str, Any]]: ...
 
     async def status_alarm_history(self, *, limit: int = 200) -> list[dict[str, Any]]: ...
+
+    async def connection_events(
+        self,
+        *,
+        limit: int = 200,
+        endpoint_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...

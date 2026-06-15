@@ -80,10 +80,19 @@ class EndpointStatus(BaseModel):
     endpoint_id: str
     state: ConnectionState
     connected: bool
+    connection_phase: str | None = None
     last_error: str | None = None
+    last_error_type: str | None = None
+    last_error_stage: str | None = None
     connected_since: datetime | None = None
+    last_connected_at: datetime | None = None
     last_data_at: datetime | None = None
     reconnect_attempts: int = 0
+    last_attempt_at: datetime | None = None
+    next_retry_at: datetime | None = None
+    retry_delay_seconds: float | None = None
+    cooldown: bool = False
+    cooldown_until: datetime | None = None
 
 
 class SubscriptionStatus(BaseModel):
