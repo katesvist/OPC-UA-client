@@ -128,6 +128,7 @@ class NodeRegistryEntry(BaseModel):
     namespace_uri: str | None = None
     browse_name: str | None = None
     display_name: str | None = None
+    enabled: bool = True
     acquisition_mode: Literal["subscription", "polling"] = "subscription"
     read_enabled: bool = True
     write_enabled: bool = False

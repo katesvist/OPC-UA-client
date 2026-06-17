@@ -107,6 +107,19 @@ class AppRuntime:
         self.config.nodes = self.registry.all()
         return results
 
+    async def update_nodes_enabled(self, node_ids: list[str], enabled: bool) -> list[NodeConfigApplyResult]:
+        node_id_set = set(node_ids)
+        if not node_id_set:
+            return []
+        updated_nodes = [
+            node.model_copy(update={"enabled": enabled}) if node.id in node_id_set else node
+            for node in self.registry.all()
+        ]
+        self.config_store.save_nodes(updated_nodes)
+        results = await self.connections.replace_nodes(updated_nodes)
+        self.config.nodes = self.registry.all()
+        return [result for result in results if result.config_id in node_id_set]
+
     async def replace_endpoints_config(self, endpoints: list[EndpointConfig]) -> None:
         self.config_store.save_endpoints(endpoints)
         old_by_id = {e.id: e for e in self.config.endpoints}

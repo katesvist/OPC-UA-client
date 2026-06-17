@@ -120,6 +120,7 @@ nodes:
   node_id: i=2266
   browse_name: 0:BuildDate
   display_name: BuildDate
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -139,6 +140,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -155,6 +157,7 @@ nodes:
   node_id: i=2260
   browse_name: 0:BuildInfo
   display_name: BuildInfo
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -173,6 +176,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -189,6 +193,7 @@ nodes:
   node_id: i=2265
   browse_name: 0:BuildNumber
   display_name: BuildNumber
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -208,6 +213,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -224,6 +230,7 @@ nodes:
   node_id: i=2258
   browse_name: 0:CurrentTime
   display_name: CurrentTime
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -242,6 +249,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -258,6 +266,7 @@ nodes:
   node_id: i=2263
   browse_name: 0:ManufacturerName
   display_name: ManufacturerName
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -277,6 +286,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -293,6 +303,7 @@ nodes:
   node_id: i=2261
   browse_name: 0:ProductName
   display_name: ProductName
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -312,6 +323,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -328,6 +340,7 @@ nodes:
   node_id: i=2262
   browse_name: 0:ProductUri
   display_name: ProductUri
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -347,6 +360,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -363,6 +377,7 @@ nodes:
   node_id: i=2992
   browse_name: 0:SecondsTillShutdown
   display_name: SecondsTillShutdown
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -381,6 +396,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -397,6 +413,7 @@ nodes:
   node_id: i=2993
   browse_name: 0:ShutdownReason
   display_name: ShutdownReason
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -415,6 +432,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -431,6 +449,7 @@ nodes:
   node_id: i=2264
   browse_name: 0:SoftwareVersion
   display_name: SoftwareVersion
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -450,6 +469,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -466,6 +486,7 @@ nodes:
   node_id: i=2257
   browse_name: 0:StartTime
   display_name: StartTime
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -484,6 +505,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -500,6 +522,7 @@ nodes:
   node_id: i=2259
   browse_name: 0:State
   display_name: State
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: false
@@ -518,6 +541,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -532,6 +556,7 @@ nodes:
 - id: rw-bool
   endpoint_id: remote-opc-server
   node_id: ns=3;s="OPC_Data_exchange"."OPC_Load_Reg_Setpoint_Visible"
+  enabled: true
   acquisition_mode: polling
   read_enabled: true
   write_enabled: true
@@ -545,6 +570,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -553,6 +579,7 @@ nodes:
 - id: rw-ctest
   endpoint_id: remote-opc-server
   node_id: ns=3;s="DB_For_Test"."cTest"
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: true
@@ -567,6 +594,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -577,6 +605,7 @@ nodes:
 - id: rw-float
   endpoint_id: remote-opc-server
   node_id: ns=3;s="OPC_Data_exchange"."OPC_Dif_Pressure_Reg_Limit"
+  enabled: true
   acquisition_mode: polling
   read_enabled: true
   write_enabled: true
@@ -590,6 +619,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -598,6 +628,7 @@ nodes:
 - id: rw-itest
   endpoint_id: remote-opc-server
   node_id: ns=3;s="DB_For_Test"."iTest"
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: true
@@ -612,6 +643,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -620,6 +652,7 @@ nodes:
 - id: rw-rtest
   endpoint_id: remote-opc-server
   node_id: ns=3;s="DB_For_Test"."rTest"
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: true
@@ -634,6 +667,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0
@@ -642,6 +676,7 @@ nodes:
 - id: rw-stest
   endpoint_id: remote-opc-server
   node_id: ns=3;s="DB_For_Test"."sTest"
+  enabled: true
   acquisition_mode: subscription
   read_enabled: true
   write_enabled: true
@@ -656,6 +691,7 @@ nodes:
   input_control:
     stale_after_seconds: 30
     suppress_duplicates: false
+    suppress_timestamp_only_changes: false
   value_transform:
     scale_factor: 1.0
     offset: 0.0

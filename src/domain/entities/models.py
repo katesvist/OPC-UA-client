@@ -96,10 +96,12 @@ class EndpointStatus(BaseModel):
 
 
 class SubscriptionStatus(BaseModel):
+    config_id: str
     endpoint_id: str
     node_id: str
     parameter_code: str
     acquisition_mode: AcquisitionMode
+    enabled: bool = True
     active: bool
     sampling_interval_ms: int | None = None
     last_value_at: datetime | None = None

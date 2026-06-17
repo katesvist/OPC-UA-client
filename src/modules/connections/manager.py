@@ -160,21 +160,41 @@ class ConnectionsCoordinator:
             previous_node = old_by_id.get(node.id)
             if previous_node is None:
                 self.registry.upsert(node)
-                applied, message = await manager.activate_node(node)
-                action = "added"
+                if node.enabled:
+                    applied, message = await manager.activate_node(node)
+                    action = "added"
+                else:
+                    applied, message = True, "Node added as disabled."
+                    action = "added_disabled"
             elif previous_node.endpoint_id != node.endpoint_id:
                 old_manager = self._managers.get(previous_node.endpoint_id)
                 if old_manager is not None:
                     await old_manager.deactivate_node(previous_node)
                 self.registry.remove(previous_node.id)
                 self.registry.upsert(node)
+                if node.enabled:
+                    applied, message = await manager.activate_node(node)
+                    action = "moved"
+                else:
+                    applied, message = True, "Node moved as disabled."
+                    action = "moved_disabled"
+            elif previous_node.enabled and not node.enabled:
+                applied, message = await manager.deactivate_node(previous_node)
+                self.registry.upsert(node)
+                action = "disabled"
+            elif not previous_node.enabled and node.enabled:
+                self.registry.upsert(node)
                 applied, message = await manager.activate_node(node)
-                action = "moved"
+                action = "enabled"
             elif self._requires_resubscribe(previous_node, node):
                 await manager.deactivate_node(previous_node)
                 self.registry.upsert(node)
-                applied, message = await manager.activate_node(node)
-                action = "resubscribed"
+                if node.enabled:
+                    applied, message = await manager.activate_node(node)
+                    action = "resubscribed"
+                else:
+                    applied, message = True, "Node remains disabled."
+                    action = "updated_disabled"
             else:
                 self.registry.upsert(node)
                 applied, message = True, "Node mapping updated."
@@ -232,6 +252,7 @@ class ConnectionsCoordinator:
     def _requires_resubscribe(self, old_node: NodeRegistryEntry, new_node: NodeRegistryEntry) -> bool:
         return (
             old_node.node_id != new_node.node_id
+            or old_node.enabled != new_node.enabled
             or old_node.acquisition_mode != new_node.acquisition_mode
             or old_node.sampling_interval_ms != new_node.sampling_interval_ms
             or old_node.polling_interval_seconds != new_node.polling_interval_seconds

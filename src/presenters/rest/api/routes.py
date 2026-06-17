@@ -32,6 +32,11 @@ class NodesConfigUpdate(BaseModel):
     nodes: list[NodeRegistryEntry]
 
 
+class NodesEnabledUpdate(BaseModel):
+    node_ids: list[str]
+    enabled: bool
+
+
 async def get_runtime(request: Request) -> AppRuntime:
     return cast(AppRuntime, request.app.state.runtime)
 
@@ -110,6 +115,28 @@ def build_router() -> APIRouter:
             )
         try:
             results = await runtime.replace_nodes_config(payload.nodes)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        return {
+            "nodes": [node.model_dump(mode="json") for node in runtime.registry.all()],
+            "results": [item.model_dump(mode="json") for item in results],
+        }
+
+    @router.patch("/config/nodes/enabled")
+    async def update_config_nodes_enabled(
+        payload: NodesEnabledUpdate,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> dict[str, object]:
+        known_ids = {node.id for node in runtime.registry.all()}
+        unknown_ids = sorted(set(payload.node_ids) - known_ids)
+        if unknown_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"message": "Unknown node config ids.", "ids": unknown_ids},
+            )
+        try:
+            results = await runtime.update_nodes_enabled(payload.node_ids, payload.enabled)
         except RuntimeError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         return {

@@ -140,6 +140,9 @@ class OpcUaConnectionManager:
 
     async def activate_node(self, node_cfg: NodeRegistryEntry) -> tuple[bool, str]:
         async with self._config_lock:
+            if not node_cfg.enabled:
+                self.registry.mark_active(node_cfg, False)
+                return True, "Node is disabled in configuration."
             if self._client is None or self._state not in {ConnectionState.CONNECTED, ConnectionState.DEGRADED}:
                 self.registry.mark_active(node_cfg, False)
                 return False, "Endpoint is not connected; node will be applied on reconnect."
@@ -319,6 +322,9 @@ class OpcUaConnectionManager:
             if node_config is None:
                 self.logger.warning("unregistered_node_update", node_id=node_id)
                 return
+            if not node_config.enabled:
+                self.registry.mark_active(node_config, False)
+                return
             metadata = self._node_metadata.get(node_id, {})
             data_value = getattr(getattr(data, "monitored_item", None), "Value", None)
             observation = Observation(
@@ -471,10 +477,15 @@ class OpcUaConnectionManager:
         if self._client is None:
             raise ConnectionError("Клиент OPC UA не инициализирован.")
         nodes = self.registry.by_endpoint(self.endpoint.id)
-        subscription_nodes = [node for node in nodes if node.acquisition_mode == "subscription"]
-        polling_nodes = [node for node in nodes if node.acquisition_mode == "polling"]
+        enabled_nodes = [node for node in nodes if node.enabled]
+        disabled_nodes = [node for node in nodes if not node.enabled]
+        subscription_nodes = [node for node in enabled_nodes if node.acquisition_mode == "subscription"]
+        polling_nodes = [node for node in enabled_nodes if node.acquisition_mode == "polling"]
 
-        for node in nodes:
+        for node in disabled_nodes:
+            self.registry.mark_error(node, "Нода деактивирована в конфигурации.")
+
+        for node in enabled_nodes:
             await self._load_node_metadata(node)
 
         if subscription_nodes or self.endpoint.events.enabled or self.endpoint.alarms_conditions.enabled:
@@ -565,6 +576,12 @@ class OpcUaConnectionManager:
 
     async def _poll_node(self, node_cfg: NodeRegistryEntry) -> None:
         while not self._stop_event.is_set():
+            latest_cfg = self.registry.get(node_cfg.id)
+            if latest_cfg is None:
+                return
+            if not latest_cfg.enabled:
+                self.registry.mark_active(node_cfg, False)
+                return
             if self._client is None:
                 return
             try:

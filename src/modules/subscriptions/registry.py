@@ -15,13 +15,16 @@ class NodeRegistry:
         for node in nodes:
             self._nodes_by_endpoint.setdefault(node.endpoint_id, []).append(node)
             self._status[node.id] = SubscriptionStatus(
+                config_id=node.id,
                 endpoint_id=node.endpoint_id,
                 node_id=node.node_id,
-                parameter_code=node.parameter_code,
-                acquisition_mode=AcquisitionMode(node.acquisition_mode),
-                active=False,
-                sampling_interval_ms=node.sampling_interval_ms,
-            )
+            parameter_code=node.parameter_code,
+            acquisition_mode=AcquisitionMode(node.acquisition_mode),
+            enabled=node.enabled,
+            active=False,
+            sampling_interval_ms=node.sampling_interval_ms,
+            last_error=None if node.enabled else "Нода деактивирована в конфигурации.",
+        )
 
     def all(self) -> list[NodeRegistryEntry]:
         return list(self._nodes_by_id.values())
@@ -41,18 +44,24 @@ class NodeRegistry:
         self._nodes_by_id[node.id] = node
         self._nodes_by_endpoint.setdefault(node.endpoint_id, []).append(node)
         self._status[node.id] = SubscriptionStatus(
+            config_id=node.id,
             endpoint_id=node.endpoint_id,
             node_id=node.node_id,
             parameter_code=node.parameter_code,
             acquisition_mode=AcquisitionMode(node.acquisition_mode),
+            enabled=node.enabled,
             active=(
-                previous_status.active
+                previous_status.active and node.enabled
                 if previous_status is not None and previous is not None and previous.endpoint_id == node.endpoint_id
                 else False
             ),
             sampling_interval_ms=node.sampling_interval_ms,
             last_value_at=previous_status.last_value_at if previous_status else None,
-            last_error=previous_status.last_error if previous_status else None,
+            last_error=(
+                previous_status.last_error
+                if previous_status and previous is not None and previous.enabled and node.enabled
+                else "Нода деактивирована в конфигурации." if not node.enabled else None
+            ),
         )
 
     def remove(self, node_id: str) -> NodeRegistryEntry | None:
