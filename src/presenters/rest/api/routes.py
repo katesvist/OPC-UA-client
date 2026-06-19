@@ -37,6 +37,10 @@ class NodesEnabledUpdate(BaseModel):
     enabled: bool
 
 
+class StatusOverloadCounterUpdate(BaseModel):
+    enabled: bool
+
+
 async def get_runtime(request: Request) -> AppRuntime:
     return cast(AppRuntime, request.app.state.runtime)
 
@@ -182,6 +186,31 @@ def build_router() -> APIRouter:
         _: None = Depends(authorize_request),
     ) -> dict[str, object]:
         return await runtime.diagnostics.publish_stats()
+
+    @router.get("/status-overload-counter")
+    async def status_overload_counter(
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> dict[str, object]:
+        payload = await runtime.diagnostics.status_overload_counter()
+        statuses = runtime.registry.statuses()
+        payload["enabled_nodes"] = sum(1 for item in statuses if item.enabled)
+        payload["active_nodes"] = sum(1 for item in statuses if item.enabled and item.active)
+        payload["total_nodes"] = len(statuses)
+        return payload
+
+    @router.put("/status-overload-counter")
+    async def update_status_overload_counter(
+        payload: StatusOverloadCounterUpdate,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> dict[str, object]:
+        result = await runtime.diagnostics.set_status_overload_counter_enabled(payload.enabled)
+        statuses = runtime.registry.statuses()
+        result["enabled_nodes"] = sum(1 for item in statuses if item.enabled)
+        result["active_nodes"] = sum(1 for item in statuses if item.enabled and item.active)
+        result["total_nodes"] = len(statuses)
+        return result
 
     @router.get("/status-alarms")
     async def status_alarms(

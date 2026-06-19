@@ -13,6 +13,8 @@ from src.domain.entities.models import ParameterEvent
 from src.domain.ports.diagnostics import DiagnosticsStore
 
 NORMAL_STATUS_CODE = 0
+GOOD_OVERLOAD_STATUS_CODE = 3_080_192
+GOOD_OVERLOAD_STATUS_NAME = "GoodOverload"
 
 
 class NoopDiagnosticsStore:
@@ -48,6 +50,22 @@ class NoopDiagnosticsStore:
             "top_nodes": [],
             "latest_at": None,
         }
+
+    async def status_overload_counter(self) -> dict[str, Any]:
+        return {
+            "enabled": False,
+            "status_code": GOOD_OVERLOAD_STATUS_CODE,
+            "status_name": GOOD_OVERLOAD_STATUS_NAME,
+            "count": 0,
+            "started_at": None,
+            "elapsed_seconds": 0,
+            "last_seen_at": None,
+            "last_node_id": None,
+            "last_parameter_code": None,
+        }
+
+    async def set_status_overload_counter_enabled(self, enabled: bool) -> dict[str, Any]:
+        return await self.status_overload_counter()
 
     async def status_alarms(self) -> list[dict[str, Any]]:
         return []
@@ -94,7 +112,7 @@ class RedisDiagnosticsStore:
             pipe.ltrim(self._audit_key, 0, max(self.settings.max_records - 1, 0))
             pipe.expire(self._audit_key, self.settings.ttl_seconds)
             await pipe.execute()
-        await self._update_status_state(record)
+        await self._update_status_overload_counter(record)
 
     async def record_connection_event(self, record: dict[str, Any]) -> None:
         if not self.settings.enabled:
@@ -160,44 +178,57 @@ class RedisDiagnosticsStore:
         }
 
     async def status_alarms(self) -> list[dict[str, Any]]:
+        return []
+
+    async def status_overload_counter(self) -> dict[str, Any]:
         assert self.redis is not None
-        status_codes = await self.redis.smembers(self._active_status_index_key)
-        alarms: list[dict[str, Any]] = []
-        now = datetime.now(UTC)
-        for raw_status in status_codes:
-            alarm = await self.redis.hgetall(self._active_status_key(raw_status))
-            if not alarm:
-                await self.redis.srem(self._active_status_index_key, raw_status)
-                continue
-            node_count = int(await self.redis.scard(self._status_nodes_key(raw_status)))
-            last_seen_at = self._parse_dt(alarm.get("last_seen_at"))
-            inactive_seconds = (now - last_seen_at).total_seconds() if last_seen_at else None
-            severity = self._severity(
-                status_code=int(alarm.get("status_code", "0")),
-                status_name=alarm.get("status_name") or "",
-                affected_nodes=node_count,
+        raw = await self.redis.hgetall(self._status_overload_counter_key)
+        enabled = self._counter_enabled(raw)
+        started_at = raw.get("started_at") if enabled else None
+        if enabled and not started_at:
+            started_at = datetime.now(UTC).isoformat()
+            await self.redis.hset(
+                self._status_overload_counter_key,
+                mapping={
+                    "enabled": "true",
+                    "status_code": str(GOOD_OVERLOAD_STATUS_CODE),
+                    "status_name": GOOD_OVERLOAD_STATUS_NAME,
+                    "count": raw.get("count") or "0",
+                    "started_at": started_at,
+                    "last_seen_at": raw.get("last_seen_at") or "",
+                    "last_node_id": raw.get("last_node_id") or "",
+                    "last_parameter_code": raw.get("last_parameter_code") or "",
+                },
             )
-            alarms.append(
-                {
-                    **alarm,
-                    "status_code": int(alarm.get("status_code", "0")),
-                    "count": int(alarm.get("count", "0")),
-                    "affected_nodes": node_count,
-                    "severity": severity,
-                    "stale": (
-                        inactive_seconds is not None
-                        and inactive_seconds > self.settings.status_alarm_clear_after_seconds
-                    ),
-                    "inactive_seconds": inactive_seconds,
-                    "sample_nodes": await self._sample_nodes(raw_status),
-                }
-            )
-        severity_order = {"critical": 4, "major": 3, "warning": 2, "info": 1}
-        return sorted(
-            alarms,
-            key=lambda item: (severity_order.get(str(item["severity"]), 0), item["last_seen_at"]),
-            reverse=True,
-        )
+        started_dt = self._parse_dt(started_at)
+        elapsed_seconds = int((datetime.now(UTC) - started_dt).total_seconds()) if started_dt else 0
+        return {
+            "enabled": enabled,
+            "status_code": GOOD_OVERLOAD_STATUS_CODE,
+            "status_name": GOOD_OVERLOAD_STATUS_NAME,
+            "count": int(raw.get("count") or 0) if enabled else 0,
+            "started_at": started_at,
+            "elapsed_seconds": max(0, elapsed_seconds),
+            "last_seen_at": raw.get("last_seen_at") if enabled else None,
+            "last_node_id": raw.get("last_node_id") if enabled else None,
+            "last_parameter_code": raw.get("last_parameter_code") if enabled else None,
+        }
+
+    async def set_status_overload_counter_enabled(self, enabled: bool) -> dict[str, Any]:
+        assert self.redis is not None
+        now = datetime.now(UTC).isoformat()
+        mapping = {
+            "enabled": "true" if enabled else "false",
+            "status_code": str(GOOD_OVERLOAD_STATUS_CODE),
+            "status_name": GOOD_OVERLOAD_STATUS_NAME,
+            "count": "0",
+            "started_at": now if enabled else "",
+            "last_seen_at": "",
+            "last_node_id": "",
+            "last_parameter_code": "",
+        }
+        await self.redis.hset(self._status_overload_counter_key, mapping=mapping)
+        return await self.status_overload_counter()
 
     async def status_alarm_history(self, *, limit: int = 200) -> list[dict[str, Any]]:
         assert self.redis is not None
@@ -220,53 +251,37 @@ class RedisDiagnosticsStore:
             if endpoint_id is None or record.get("endpoint_id") == endpoint_id
         ]
 
-    async def _update_status_state(self, record: dict[str, Any]) -> None:
+    async def _update_status_overload_counter(self, record: dict[str, Any]) -> None:
         assert self.redis is not None
-        node_key = f"{record.get('endpoint_id')}:{record.get('node_id')}"
-        current_status = int(record.get("published_status") or 0)
-        previous_status = await self.redis.hget(self._node_status_key, node_key)
-        if current_status == NORMAL_STATUS_CODE:
-            if previous_status and previous_status != str(NORMAL_STATUS_CODE):
-                await self._remove_node_from_status(node_key, previous_status, record)
-            await self.redis.hset(self._node_status_key, node_key, str(NORMAL_STATUS_CODE))
+        if not self._is_good_overload(record):
             return
 
-        raw_status = str(current_status)
-        if previous_status and previous_status not in {str(NORMAL_STATUS_CODE), raw_status}:
-            await self._remove_node_from_status(node_key, previous_status, record)
-        await self.redis.hset(self._node_status_key, node_key, raw_status)
-        await self.redis.sadd(self._status_nodes_key(raw_status), node_key)
-        await self.redis.expire(self._status_nodes_key(raw_status), self.settings.ttl_seconds)
-
-        active_key = self._active_status_key(raw_status)
-        existing = await self.redis.hgetall(active_key)
+        existing = await self.redis.hgetall(self._status_overload_counter_key)
+        if not self._counter_enabled(existing):
+            return
         now = datetime.now(UTC).isoformat()
-        first_seen = existing.get("first_seen_at") or now
         count = int(existing.get("count", "0")) + 1
-        status_name = str(record.get("status_name") or record.get("quality_code") or current_status)
         mapping = {
-            "status_code": str(current_status),
-            "status_name": status_name,
-            "quality": str(record.get("quality") or ""),
-            "status_text": str(record.get("status_text") or ""),
-            "first_seen_at": first_seen,
-            "last_seen_at": now,
+            "enabled": "true",
+            "status_code": str(GOOD_OVERLOAD_STATUS_CODE),
+            "status_name": GOOD_OVERLOAD_STATUS_NAME,
             "count": str(count),
-            "last_endpoint_id": str(record.get("endpoint_id") or ""),
+            "started_at": existing.get("started_at") or now,
+            "last_seen_at": now,
             "last_node_id": str(record.get("node_id") or ""),
             "last_parameter_code": str(record.get("parameter_code") or ""),
-            "message": self._alarm_message(current_status, status_name),
         }
-        async with self.redis.pipeline(transaction=True) as pipe:
-            pipe.hset(active_key, mapping=mapping)
-            pipe.sadd(self._active_status_index_key, raw_status)
-            pipe.expire(active_key, self.settings.ttl_seconds)
-            pipe.expire(self._active_status_index_key, self.settings.ttl_seconds)
-            if not existing:
-                pipe.lpush(self._status_history_key, self._dump_history("raised", mapping, record))
-                pipe.ltrim(self._status_history_key, 0, max(self.settings.max_records - 1, 0))
-                pipe.expire(self._status_history_key, self.settings.ttl_seconds)
-            await pipe.execute()
+        await self.redis.hset(self._status_overload_counter_key, mapping=mapping)
+
+    def _is_good_overload(self, record: dict[str, Any]) -> bool:
+        status_code = int(record.get("published_status") or 0)
+        status_name = str(record.get("status_name") or record.get("quality_code") or "")
+        return status_code == GOOD_OVERLOAD_STATUS_CODE or status_name.lower() == "goodoverload"
+
+    def _counter_enabled(self, raw: dict[str, str]) -> bool:
+        if not raw:
+            return True
+        return raw.get("enabled", "true").lower() == "true"
 
     async def _remove_node_from_status(self, node_key: str, raw_status: str, record: dict[str, Any]) -> None:
         assert self.redis is not None
@@ -357,6 +372,10 @@ class RedisDiagnosticsStore:
     @property
     def _connection_events_key(self) -> str:
         return f"{self.settings.key_prefix}:diagnostics:connection:events"
+
+    @property
+    def _status_overload_counter_key(self) -> str:
+        return f"{self.settings.key_prefix}:diagnostics:status-overload:counter"
 
     def _active_status_key(self, raw_status: str) -> str:
         return f"{self.settings.key_prefix}:diagnostics:status:active:{raw_status}"
