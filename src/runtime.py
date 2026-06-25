@@ -17,6 +17,7 @@ from src.domain.services.buffer_worker import BufferedDeliveryWorker
 from src.domain.services.diagnostics import create_diagnostics_store
 from src.domain.services.health import HealthService
 from src.domain.services.pipeline import EventPipeline
+from src.domain.services.raw_capture import RawNotificationCapture
 from src.modules.connections.manager import ConnectionsCoordinator
 from src.modules.subscriptions.registry import NodeRegistry
 
@@ -34,6 +35,7 @@ class AppRuntime:
     health: HealthService
     buffer_worker: BufferedDeliveryWorker
     config_store: YamlConfigStore
+    raw_capture: RawNotificationCapture
     buffer_ready: bool = False
 
     @classmethod
@@ -45,6 +47,7 @@ class AppRuntime:
         registry = NodeRegistry(config.nodes)
         buffer = create_buffer(config.buffer)
         diagnostics = create_diagnostics_store(config.diagnostics, config.buffer)
+        raw_capture = RawNotificationCapture()
         publisher = create_publisher(config.publisher)
         pipeline = EventPipeline(
             publisher=publisher,
@@ -58,6 +61,7 @@ class AppRuntime:
             pipeline=pipeline,
             metrics=metrics,
             diagnostics=diagnostics,
+            raw_capture=raw_capture,
         )
         buffer_worker = BufferedDeliveryWorker(
             buffer=buffer,
@@ -77,6 +81,7 @@ class AppRuntime:
             health=HealthService(),
             buffer_worker=buffer_worker,
             config_store=YamlConfigStore(get_config_path()),
+            raw_capture=raw_capture,
         )
         logger.info(
             "runtime_built",
@@ -96,6 +101,7 @@ class AppRuntime:
 
     async def stop(self) -> None:
         await self.connections.stop()
+        await self.raw_capture.stop()
         await self.buffer_worker.stop()
         await self.publisher.close()
         await self.diagnostics.close()

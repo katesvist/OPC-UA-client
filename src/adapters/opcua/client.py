@@ -33,6 +33,7 @@ from src.domain.entities.models import (
 from src.domain.ports.diagnostics import DiagnosticsStore
 from src.domain.services.diagnostics import NoopDiagnosticsStore
 from src.domain.services.pipeline import EventPipeline
+from src.domain.services.raw_capture import RawNotificationCapture
 from src.modules.subscriptions.registry import NodeRegistry
 
 
@@ -58,12 +59,14 @@ class OpcUaConnectionManager:
         pipeline: EventPipeline,
         metrics: MetricsRegistry,
         diagnostics: DiagnosticsStore | None = None,
+        raw_capture: RawNotificationCapture | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.registry = registry
         self.pipeline = pipeline
         self.metrics = metrics
         self.diagnostics = diagnostics or NoopDiagnosticsStore()
+        self.raw_capture = raw_capture
         self.logger = get_logger(__name__).bind(endpoint_id=endpoint.id)
         self._stop_event = asyncio.Event()
         self._reconnect_event = asyncio.Event()
@@ -893,9 +896,11 @@ class OpcUaConnectionManager:
         try:
             node_id = node.nodeid.to_string()
         except Exception:
+            self._record_raw_datachange(None, node, value, data)
             self.track_background_task(self.handle_datachange(node, value, data))
             return
 
+        self._record_raw_datachange(node_id, node, value, data)
         defaults = self.endpoint.subscription_defaults
         if not defaults.coalesce_notifications:
             try:
@@ -914,6 +919,44 @@ class OpcUaConnectionManager:
             self._queued_notification_node_ids.add(node_id)
         except asyncio.QueueFull:
             self.logger.warning("opcua_datachange_queue_full", node_id=node_id)
+
+    def _record_raw_datachange(self, node_id: str | None, node: Any, value: Any, data: Any) -> None:
+        if self.raw_capture is None:
+            return
+        data_value = getattr(getattr(data, "monitored_item", None), "Value", None)
+        resolved_node_id = node_id or self._safe_node_id(node)
+        metadata = self._node_metadata.get(resolved_node_id, {}) if resolved_node_id else {}
+        self.raw_capture.record(
+            {
+                "received_at": datetime.now(UTC).isoformat(),
+                "endpoint_id": self.endpoint.id,
+                "node_id": resolved_node_id,
+                "value": value,
+                "value_type": type(value).__name__,
+                "source_timestamp": self._iso_timestamp(self._extract_timestamp(data_value, "SourceTimestamp")),
+                "server_timestamp": self._iso_timestamp(self._extract_timestamp(data_value, "ServerTimestamp")),
+                "status_raw": self._extract_status_raw(data_value),
+                "status_code": self._extract_status_code(data_value),
+                "status_text": self._extract_status_text(data_value),
+                "source_picoseconds": getattr(data_value, "SourcePicoseconds", None),
+                "server_picoseconds": getattr(data_value, "ServerPicoseconds", None),
+                "namespace_index": getattr(getattr(node, "nodeid", None), "NamespaceIndex", None),
+                "browse_name": metadata.get("browse_name"),
+                "display_name": metadata.get("display_name"),
+                "data_type": metadata.get("data_type"),
+                "value_rank": metadata.get("value_rank"),
+                "array_dimensions": list(metadata.get("array_dimensions", [])),
+            }
+        )
+
+    def _safe_node_id(self, node: Any) -> str | None:
+        try:
+            return node.nodeid.to_string()
+        except Exception:
+            return None
+
+    def _iso_timestamp(self, value: datetime | None) -> str | None:
+        return value.isoformat() if value is not None else None
 
     def _start_notification_workers(self) -> None:
         if self._notification_workers:

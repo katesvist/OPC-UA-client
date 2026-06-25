@@ -14,6 +14,7 @@ from src.domain.entities.models import (
 )
 from src.domain.ports.diagnostics import DiagnosticsStore
 from src.domain.services.pipeline import EventPipeline
+from src.domain.services.raw_capture import RawNotificationCapture
 from src.modules.subscriptions.registry import NodeRegistry
 
 
@@ -25,13 +26,15 @@ class ConnectionsCoordinator:
         pipeline: EventPipeline,
         metrics: MetricsRegistry,
         diagnostics: DiagnosticsStore,
+        raw_capture: RawNotificationCapture | None = None,
     ) -> None:
         self._pipeline = pipeline
         self._metrics = metrics
         self._diagnostics = diagnostics
+        self._raw_capture = raw_capture
         self._all_endpoints: dict[str, EndpointConfig] = {e.id: e for e in endpoints}
         self._managers = {
-            endpoint.id: OpcUaConnectionManager(endpoint, registry, pipeline, metrics, diagnostics)
+            endpoint.id: OpcUaConnectionManager(endpoint, registry, pipeline, metrics, diagnostics, raw_capture)
             for endpoint in endpoints
             if endpoint.enabled
         }
@@ -225,6 +228,7 @@ class ConnectionsCoordinator:
                 self._pipeline,
                 self._metrics,
                 self._diagnostics,
+                self._raw_capture,
             )
             self._managers[endpoint_cfg.id] = manager
             await manager.start()

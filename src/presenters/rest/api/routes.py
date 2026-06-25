@@ -5,7 +5,7 @@ from typing import cast
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.config.models import EndpointConfig, NodeRegistryEntry, _mask_endpoint
 from src.domain.entities.errors import (
@@ -23,6 +23,7 @@ from src.domain.entities.models import (
     ReadRequest,
     WriteRequest,
 )
+from src.domain.services.raw_capture import RawCaptureAlreadyActiveError, RawCaptureFileExistsError
 from src.runtime import AppRuntime
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -39,6 +40,13 @@ class NodesEnabledUpdate(BaseModel):
 
 class StatusOverloadCounterUpdate(BaseModel):
     enabled: bool
+
+
+class RawCaptureStartRequest(BaseModel):
+    duration_seconds: float = Field(default=2.0, gt=0, le=60)
+    output: str | None = None
+    endpoint_id: str | None = None
+    max_records: int = Field(default=100000, ge=1, le=1_000_000)
 
 
 async def get_runtime(request: Request) -> AppRuntime:
@@ -226,6 +234,28 @@ def build_router() -> APIRouter:
         _: None = Depends(authorize_request),
     ) -> list[dict[str, object]]:
         return await runtime.diagnostics.status_alarm_history(limit=limit)
+
+    @router.post("/debug/raw-capture/start")
+    async def start_raw_capture(
+        payload: RawCaptureStartRequest,
+        runtime: AppRuntime = Depends(get_runtime),
+        _: None = Depends(authorize_request),
+    ) -> dict[str, object]:
+        if payload.endpoint_id is not None and payload.endpoint_id not in {item.id for item in runtime.config.endpoints}:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Endpoint {payload.endpoint_id} not found.")
+        try:
+            return await runtime.raw_capture.start_capture(
+                duration_seconds=payload.duration_seconds,
+                output_path=payload.output,
+                endpoint_id=payload.endpoint_id,
+                max_records=payload.max_records,
+            )
+        except RawCaptureAlreadyActiveError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except RawCaptureFileExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @router.get("/connection-events")
     async def connection_events(
