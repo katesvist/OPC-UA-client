@@ -113,7 +113,9 @@ async def test_pipeline_builds_valid_event(endpoint_config, node_config) -> None
     assert event is not None
     assert event.validation_state == ValidationState.VALID
     assert publisher.events[0].parameter_code == "PUMP_PRESSURE"
+    assert publisher.events[0].id_source == "22222222-2222-2222-2222-222222222222"
     assert event.metadata["source_binding"]["source_id"] == "source-1"
+    assert event.metadata["source_binding"]["id_source"] == "22222222-2222-2222-2222-222222222222"
     assert event.metadata["node_registry"]["id"] == "node-1"
 
 

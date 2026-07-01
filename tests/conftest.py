@@ -17,6 +17,7 @@ def endpoint_config() -> EndpointConfig:
         url="opc.tcp://127.0.0.1:4840/freeopcua/server/",
         metadata=EndpointMetadata(
             source_id="source-1",
+            id_source="22222222-2222-2222-2222-222222222222",
             owner_type="rig",
             owner_id="rig-1",
         ),

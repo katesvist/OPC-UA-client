@@ -85,6 +85,7 @@ class EventPipeline:
 
         event = ParameterEvent(
             source_id=observation.source_id,
+            id_source=observation.id_source or endpoint.metadata.id_source,
             endpoint_id=observation.endpoint_id,
             owner_type=observation.owner_type,
             owner_id=observation.owner_id,
@@ -199,6 +200,7 @@ class EventPipeline:
     ) -> ParameterEvent:
         return ParameterEvent(
             source_id=observation.source_id,
+            id_source=observation.id_source or endpoint.metadata.id_source,
             endpoint_id=observation.endpoint_id,
             owner_type=observation.owner_type,
             owner_id=observation.owner_id,

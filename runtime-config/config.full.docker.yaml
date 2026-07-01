@@ -77,6 +77,7 @@ endpoints:
     polling_error_backoff_max_seconds: 900.0
   metadata:
     source_id: remote-opc-lab
+    id_source: 91b7d133-fcda-4092-98eb-c23a078df86f
     source_system_id: opc-server-192-168-0-120
     owner_type: rig
     owner_id: rig-01

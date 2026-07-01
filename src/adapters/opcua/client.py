@@ -333,6 +333,7 @@ class OpcUaConnectionManager:
             observation = Observation(
                 endpoint_id=self.endpoint.id,
                 source_id=self.endpoint.metadata.source_id,
+                id_source=self.endpoint.metadata.id_source,
                 owner_type=self.endpoint.metadata.owner_type,
                 owner_id=self.endpoint.metadata.owner_id,
                 node_id=node_id,
@@ -593,6 +594,7 @@ class OpcUaConnectionManager:
                 observation = Observation(
                     endpoint_id=self.endpoint.id,
                     source_id=self.endpoint.metadata.source_id,
+                    id_source=self.endpoint.metadata.id_source,
                     owner_type=self.endpoint.metadata.owner_type,
                     owner_id=self.endpoint.metadata.owner_id,
                     node_id=node_cfg.node_id,

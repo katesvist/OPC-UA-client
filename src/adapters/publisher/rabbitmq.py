@@ -114,6 +114,7 @@ class RabbitMqPublisher:
             "payload": {
                 "name": event.parameter_code,
                 "id_by_dict": event.id_by_dict,
+                "id_source": event.id_source,
                 "value": event.value_normalized,
                 "type": self._map_validator_type(event.value_type),
                 "type_by_dict": event.type_by_dict,

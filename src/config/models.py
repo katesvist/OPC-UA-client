@@ -75,6 +75,7 @@ class AlarmsConditionsConfig(BaseModel):
 
 class EndpointMetadata(BaseModel):
     source_id: str
+    id_source: str | None = None
     source_system_id: str | None = None
     owner_type: str
     owner_id: str

@@ -21,6 +21,7 @@ def test_rabbitmq_publisher_builds_params_validator_envelope() -> None:
     event = ParameterEvent(
         event_id="00000000-0000-0000-0000-000000000001",
         source_id="remote-opc-lab",
+        id_source="91b7d133-fcda-4092-98eb-c23a078df86f",
         endpoint_id="remote-opc-server",
         owner_type="rig",
         owner_id="rig-01",
@@ -55,5 +56,6 @@ def test_rabbitmq_publisher_builds_params_validator_envelope() -> None:
     assert payload["payload"]["status"] == 0
     assert payload["payload"]["owner"] == "rig-01"
     assert payload["payload"]["source"] == "remote-opc-lab"
+    assert payload["payload"]["id_source"] == "91b7d133-fcda-4092-98eb-c23a078df86f"
     assert payload["payload"]["id_by_dict"] == "dict-1"
     assert payload["metadata"]["opcua"]["node_id"] == event.node_id

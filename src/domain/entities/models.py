@@ -12,6 +12,7 @@ from src.domain.entities.enums import AcquisitionMode, ConnectionState, QualityC
 class Observation(BaseModel):
     endpoint_id: str
     source_id: str
+    id_source: str | None = None
     owner_type: str
     owner_id: str
     node_id: str
@@ -36,6 +37,7 @@ class Observation(BaseModel):
 class ParameterEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid4()))
     source_id: str
+    id_source: str | None = None
     endpoint_id: str
     owner_type: str
     owner_id: str
