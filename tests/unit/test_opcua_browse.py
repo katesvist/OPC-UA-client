@@ -125,3 +125,42 @@ async def test_browse_skips_unreadable_child_nodes(endpoint_config, node_config,
     assert "ns=2;s=Pump01.Pressure" in result_ids
     assert "ns=2;s=Pump01.Broken" not in result_ids
 
+
+@pytest.mark.asyncio
+async def test_browse_allows_lazy_expansion_of_variable_nodes(endpoint_config, node_config, metrics) -> None:
+    manager = _build_manager(endpoint_config, node_config, metrics)
+
+    field = _FakeNode(
+        "ns=2;s=Device.Status.Temperature",
+        "Variable",
+        browse_name="2:Temperature",
+        display_name="Temperature",
+    )
+    structured_variable = _FakeNode(
+        "ns=2;s=Device.Status",
+        "Variable",
+        browse_name="2:Status",
+        display_name="Status",
+        children=[field],
+        data_type="ExtensionObject",
+    )
+    root = _FakeNode(
+        "i=85",
+        "Object",
+        browse_name="0:Objects",
+        display_name="Objects",
+        children=[structured_variable],
+    )
+    manager._client.nodes.objects = root
+
+    first_level = await manager.browse(max_depth=1)
+    status = next(item for item in first_level if item.node_id == "ns=2;s=Device.Status")
+
+    assert status.node_class == "Variable"
+    assert status.has_children is True
+    assert all(item.node_id != "ns=2;s=Device.Status.Temperature" for item in first_level)
+
+    manager._client.get_node.return_value = structured_variable
+    expanded = await manager.browse(node_id=structured_variable.nodeid.to_string(), max_depth=1)
+
+    assert any(item.node_id == "ns=2;s=Device.Status.Temperature" for item in expanded)

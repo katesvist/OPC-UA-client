@@ -1411,7 +1411,8 @@ class OpcUaConnectionManager:
         return getattr(value, "to_string", lambda: str(value))()
 
     def _may_have_children(self, node_class_name: str) -> bool:
-        return node_class_name == "Object"
+        # Variables may expose Structure fields or Array elements as child Variables.
+        return node_class_name in {"Object", "Variable"}
 
     def _should_include_node(self, node_class_name: str, include_variables: bool, include_objects: bool) -> bool:
         if node_class_name == "Variable":
