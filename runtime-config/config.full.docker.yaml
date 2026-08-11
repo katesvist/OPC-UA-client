@@ -100,7 +100,7 @@ endpoints:
     - opcua
     - windows
 - id: mock-opcua-server
-  enabled: true
+  enabled: false
   url: opc.tcp://mock-opcua-server:4840/freeopcua/server/
   security_policy: None
   security_mode: None
@@ -150,8 +150,8 @@ endpoints:
     owner_id: rig-01
     tags: []
 nodes:
-- id: mock-opcua-server-0-builddate
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-builddate
+  endpoint_id: remote-opc-server
   node_id: i=2266
   browse_name: 0:BuildDate
   display_name: BuildDate
@@ -167,7 +167,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_id: remote-opc-server-0-serverstatus-0-buildinfo
   group_path:
   - 0:ServerStatus
   - 0:BuildInfo
@@ -187,8 +187,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-buildinfo
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-buildinfo
+  endpoint_id: remote-opc-server
   node_id: i=2260
   browse_name: 0:BuildInfo
   display_name: BuildInfo
@@ -204,7 +204,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus
+  group_id: remote-opc-server-0-serverstatus
   group_path:
   - 0:ServerStatus
   group_display_name: ServerStatus
@@ -223,8 +223,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-buildnumber
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-buildnumber
+  endpoint_id: remote-opc-server
   node_id: i=2265
   browse_name: 0:BuildNumber
   display_name: BuildNumber
@@ -240,7 +240,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_id: remote-opc-server-0-serverstatus-0-buildinfo
   group_path:
   - 0:ServerStatus
   - 0:BuildInfo
@@ -260,8 +260,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-currenttime
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-currenttime
+  endpoint_id: remote-opc-server
   node_id: i=2258
   browse_name: 0:CurrentTime
   display_name: CurrentTime
@@ -277,7 +277,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus
+  group_id: remote-opc-server-0-serverstatus
   group_path:
   - 0:ServerStatus
   group_display_name: ServerStatus
@@ -296,8 +296,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-manufacturername
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-manufacturername
+  endpoint_id: remote-opc-server
   node_id: i=2263
   browse_name: 0:ManufacturerName
   display_name: ManufacturerName
@@ -313,7 +313,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_id: remote-opc-server-0-serverstatus-0-buildinfo
   group_path:
   - 0:ServerStatus
   - 0:BuildInfo
@@ -333,8 +333,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-productname
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-productname
+  endpoint_id: remote-opc-server
   node_id: i=2261
   browse_name: 0:ProductName
   display_name: ProductName
@@ -350,7 +350,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_id: remote-opc-server-0-serverstatus-0-buildinfo
   group_path:
   - 0:ServerStatus
   - 0:BuildInfo
@@ -370,8 +370,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-producturi
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-producturi
+  endpoint_id: remote-opc-server
   node_id: i=2262
   browse_name: 0:ProductUri
   display_name: ProductUri
@@ -387,7 +387,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_id: remote-opc-server-0-serverstatus-0-buildinfo
   group_path:
   - 0:ServerStatus
   - 0:BuildInfo
@@ -407,8 +407,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-secondstillshutdown
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-secondstillshutdown
+  endpoint_id: remote-opc-server
   node_id: i=2992
   browse_name: 0:SecondsTillShutdown
   display_name: SecondsTillShutdown
@@ -424,7 +424,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus
+  group_id: remote-opc-server-0-serverstatus
   group_path:
   - 0:ServerStatus
   group_display_name: ServerStatus
@@ -443,8 +443,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-shutdownreason
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-shutdownreason
+  endpoint_id: remote-opc-server
   node_id: i=2993
   browse_name: 0:ShutdownReason
   display_name: ShutdownReason
@@ -460,7 +460,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus
+  group_id: remote-opc-server-0-serverstatus
   group_path:
   - 0:ServerStatus
   group_display_name: ServerStatus
@@ -479,8 +479,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-softwareversion
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-softwareversion
+  endpoint_id: remote-opc-server
   node_id: i=2264
   browse_name: 0:SoftwareVersion
   display_name: SoftwareVersion
@@ -496,7 +496,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus-0-buildinfo
+  group_id: remote-opc-server-0-serverstatus-0-buildinfo
   group_path:
   - 0:ServerStatus
   - 0:BuildInfo
@@ -516,8 +516,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-starttime
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-starttime
+  endpoint_id: remote-opc-server
   node_id: i=2257
   browse_name: 0:StartTime
   display_name: StartTime
@@ -533,7 +533,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus
+  group_id: remote-opc-server-0-serverstatus
   group_path:
   - 0:ServerStatus
   group_display_name: ServerStatus
@@ -552,8 +552,8 @@ nodes:
     dict_param_name: ASPD.APD1.Load.Descent.Warning_Zone
     dict_param_description: Зона предупреждения нагрузки при Спуске [тс]
   tags: []
-- id: mock-opcua-server-0-state
-  endpoint_id: mock-opcua-server
+- id: remote-opc-server-0-state
+  endpoint_id: remote-opc-server
   node_id: i=2259
   browse_name: 0:State
   display_name: State
@@ -569,7 +569,7 @@ nodes:
   expected_type: float
   value_shape: scalar
   unit: тс
-  group_id: mock-opcua-server-0-serverstatus
+  group_id: remote-opc-server-0-serverstatus
   group_path:
   - 0:ServerStatus
   group_display_name: ServerStatus
