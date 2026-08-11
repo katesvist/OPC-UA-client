@@ -8,6 +8,7 @@ import aio_pika
 
 from src.config.models import PublisherSettings
 from src.domain.entities.models import ParameterEvent
+from src.domain.source_identity import source_identity_error
 
 
 class RabbitMqPublisher:
@@ -19,6 +20,9 @@ class RabbitMqPublisher:
         self._lock = asyncio.Lock()
 
     async def publish(self, event: ParameterEvent) -> None:
+        identity_error = source_identity_error(event.id_source)
+        if identity_error is not None:
+            raise ValueError(identity_error)
         await self._ensure_connected()
         assert self._exchange is not None
         body, message_type = self._build_message_body(event)

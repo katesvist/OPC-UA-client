@@ -25,7 +25,12 @@ async def test_opcua_subscription_receives_event() -> None:
         endpoint = EndpointConfig(
             id="endpoint-1",
             url=endpoint_url,
-            metadata=EndpointMetadata(source_id="source-1", owner_type="rig", owner_id="rig-1"),
+            metadata=EndpointMetadata(
+                source_id="source-1",
+                id_source="22222222-2222-2222-2222-222222222222",
+                owner_type="rig",
+                owner_id="rig-1",
+            ),
             request_timeout_seconds=0.5,
         )
         node = NodeConfig(
@@ -75,7 +80,12 @@ async def test_opcua_browse_read_write_operations() -> None:
         endpoint = EndpointConfig(
             id="endpoint-1",
             url=endpoint_url,
-            metadata=EndpointMetadata(source_id="source-1", owner_type="rig", owner_id="rig-1"),
+            metadata=EndpointMetadata(
+                source_id="source-1",
+                id_source="22222222-2222-2222-2222-222222222222",
+                owner_type="rig",
+                owner_id="rig-1",
+            ),
             request_timeout_seconds=0.5,
         )
         pressure_node_id = f"ns={server.namespace_idx};s=Pump01.Pressure"

@@ -43,7 +43,7 @@ diagnostics:
 endpoints:
 - id: remote-opc-server
   enabled: true
-  url: opc.tcp://192.168.0.120:4840
+  url: opc.tcp://192.168.0.130:4840
   security_policy: None
   security_mode: None
   auth:
@@ -89,6 +89,7 @@ endpoints:
     max_cached_events: 200
   metadata:
     source_id: remote-opc-lab
+    id_source: 91b7d133-fcda-4092-98eb-c23a078df86f
     source_system_id: opc-server-192-168-0-120
     owner_type: rig
     owner_id: rig-01

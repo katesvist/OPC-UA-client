@@ -143,6 +143,43 @@ async def test_pipeline_buffers_on_publish_failure(endpoint_config, node_config)
 
 
 @pytest.mark.asyncio
+async def test_pipeline_suppresses_event_without_source_uuid(endpoint_config, node_config) -> None:
+    publisher = PublisherOk()
+    buffer = InMemoryBuffer()
+    diagnostics = DiagnosticsRecorder()
+    pipeline = EventPipeline(
+        publisher=publisher,
+        buffer=buffer,
+        metrics=MetricsRegistry(),
+        diagnostics=diagnostics,
+    )
+    endpoint_without_source_uuid = endpoint_config.model_copy(
+        update={"metadata": endpoint_config.metadata.model_copy(update={"id_source": None})}
+    )
+    observation = Observation(
+        endpoint_id=endpoint_config.id,
+        source_id=endpoint_config.metadata.source_id,
+        owner_type=endpoint_config.metadata.owner_type,
+        owner_id=endpoint_config.metadata.owner_id,
+        node_id=node_config.node_id,
+        raw_value=12.3,
+        status_code="Good",
+        acquisition_mode=AcquisitionMode.SUBSCRIPTION,
+        source_timestamp=datetime.now(UTC),
+    )
+
+    event = await pipeline.process(observation, endpoint_without_source_uuid, node_config)
+
+    assert event is not None
+    assert event.validation_state == ValidationState.INVALID
+    assert event.id_source is None
+    assert publisher.events == []
+    assert buffer.items == []
+    assert diagnostics.records[0]["decision"] == "suppressed"
+    assert diagnostics.records[0]["reason"] == "source_identity_invalid"
+
+
+@pytest.mark.asyncio
 async def test_pipeline_normalizes_char_value_to_symbol(endpoint_config, node_config) -> None:
     publisher = PublisherOk()
     buffer = InMemoryBuffer()

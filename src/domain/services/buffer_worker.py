@@ -8,6 +8,7 @@ from src.adapters.metrics.registry import MetricsRegistry
 from src.config.models import BufferSettings
 from src.domain.ports.buffer import EventBuffer
 from src.domain.ports.publisher import DownstreamPublisher
+from src.domain.source_identity import source_identity_error
 
 
 class BufferedDeliveryWorker:
@@ -40,6 +41,18 @@ class BufferedDeliveryWorker:
         while not self._stop_event.is_set():
             due_events = await self.buffer.get_due_events(self.settings.flush_batch_size)
             for event in due_events:
+                identity_error = source_identity_error(event.payload.id_source)
+                if identity_error is not None:
+                    self.logger.error(
+                        "buffered_event_source_identity_invalid",
+                        buffer_id=event.id,
+                        event_id=event.event_id,
+                        endpoint_id=event.payload.endpoint_id,
+                        error=identity_error,
+                    )
+                    await self.buffer.move_to_dead_letter(event.id, identity_error)
+                    self.metrics.inc_dead_letter_events(event.payload.endpoint_id)
+                    continue
                 try:
                     await self.publisher.publish(event.payload)
                     await self.buffer.mark_published(event.id)

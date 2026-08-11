@@ -16,6 +16,7 @@ from src.domain.ports.diagnostics import DiagnosticsStore
 from src.domain.ports.publisher import DownstreamPublisher
 from src.domain.quality.interpreter import QualityInterpreter
 from src.domain.services.diagnostics import NoopDiagnosticsStore, build_publish_audit_record
+from src.domain.source_identity import source_identity_error
 from src.domain.transform.normalizer import ValueNormalizer
 from src.domain.validation.engine import ValidationEngine
 
@@ -54,6 +55,26 @@ class EventPipeline:
             source_timestamp=observation.source_timestamp,
             stale_after_seconds=node.input_control.stale_after_seconds,
         )
+
+        identity_error = source_identity_error(observation.id_source or endpoint.metadata.id_source)
+        if identity_error is not None:
+            event = self._build_error_event(
+                observation=observation,
+                endpoint=endpoint,
+                node=node,
+                quality=quality.category,
+                quality_code=quality.quality_code,
+                status_text=identity_error,
+                errors=[identity_error],
+            )
+            await self._record_diagnostics(
+                event,
+                "suppressed",
+                reason="source_identity_invalid",
+                error=identity_error,
+            )
+            self.metrics.inc_invalid_events(observation.endpoint_id)
+            return event
 
         previous_value, previous_timestamp = self._last_values.get(self._key(observation), (None, None))
 

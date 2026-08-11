@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+import pytest
+
 from src.adapters.publisher.rabbitmq import RabbitMqPublisher
 from src.config.models import PublisherSettings
 from src.domain.entities.enums import AcquisitionMode, QualityCategory, ValidationState
@@ -59,3 +61,28 @@ def test_rabbitmq_publisher_builds_params_validator_envelope() -> None:
     assert payload["payload"]["id_source"] == "91b7d133-fcda-4092-98eb-c23a078df86f"
     assert payload["payload"]["id_by_dict"] == "dict-1"
     assert payload["metadata"]["opcua"]["node_id"] == event.node_id
+
+
+@pytest.mark.asyncio
+async def test_rabbitmq_publisher_rejects_event_without_source_uuid() -> None:
+    publisher = RabbitMqPublisher(PublisherSettings())
+    event = ParameterEvent(
+        source_id="remote-opc-lab",
+        id_source=None,
+        endpoint_id="remote-opc-server",
+        owner_type="rig",
+        owner_id="rig-01",
+        parameter_code="PRESSURE",
+        parameter_name="Pressure",
+        node_id="ns=2;s=Pressure",
+        value_normalized=12.3,
+        value_type="float",
+        quality=QualityCategory.GOOD,
+        quality_code="Good",
+        source_timestamp=datetime.now(UTC),
+        validation_state=ValidationState.VALID,
+        acquisition_mode=AcquisitionMode.SUBSCRIPTION,
+    )
+
+    with pytest.raises(ValueError, match="id_source is required"):
+        await publisher.publish(event)
